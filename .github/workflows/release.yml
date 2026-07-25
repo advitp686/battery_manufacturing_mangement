@@ -1,0 +1,35 @@
+name: Build Windows installer
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore and test
+        run: |
+          dotnet restore BatteryManagement.sln
+          dotnet test BatteryManagement.sln --no-restore --configuration Release
+      - name: Publish self-contained Windows app
+        run: dotnet publish src/BatteryManagement/BatteryManagement.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
+      - name: Build installer
+        run: iscc installer/BatteryManagement.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BatteryManagement-Setup
+          path: installer/output/BatteryManagement-Setup.exe
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/output/BatteryManagement-Setup.exe

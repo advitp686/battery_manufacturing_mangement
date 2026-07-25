@@ -1,0 +1,14 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.db
+*.db-shm
+*.db-wal
+appsettings.local.json
+client_secret*.json
+token.json
+publish/
+.tools/
+installer/output/
