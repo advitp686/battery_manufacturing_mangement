@@ -16,6 +16,7 @@ Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64
+ArchitecturesAllowed=x64compatible
 PrivilegesRequired=admin
 
 [Files]

@@ -3,8 +3,9 @@ using BatteryManagement.Infrastructure;
 using Microsoft.Win32;
 using System.Collections;
 using System.Globalization;
-using System.Text;
 using System.IO;
+using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -22,46 +23,491 @@ public partial class MainWindow : Window
 
     public MainWindow(AppUser user)
     {
-        _user = user; InitializeComponent(); UserLabel.Text = $"Signed in as {_user.Username} ({_user.Role})"; WarrantyStartPicker.SelectedDate = DateTime.Today; Loaded += async (_, _) => { await RefreshAsync(); _syncTimer.Tick += async (_, _) => { await AppServices.Sync.FlushAsync(); await RefreshAsync(); }; _syncTimer.Start(); }; Closed += (_, _) => _syncTimer.Stop();
+        _user = user;
+        InitializeComponent();
+        UserLabel.Text = $"Signed in as {_user.Username} ({_user.Role})";
+        WarrantyStartPicker.SelectedDate = DateTime.Today;
+        Loaded += async (_, _) =>
+        {
+            try
+            {
+                await RefreshAsync();
+                _syncTimer.Tick += async (_, _) =>
+                {
+                    try
+                    {
+                        await AppServices.Sync.FlushAsync();
+                        await RefreshAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        SyncLabel.Text = $"Refresh error: {ex.Message}";
+                    }
+                };
+                _syncTimer.Start();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"The dashboard could not load.\n\n{ex.Message}", "Battery Management", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        };
+        Closed += (_, _) => _syncTimer.Stop();
     }
+
     private async Task RefreshAsync()
     {
-        _models = await AppServices.Batteries.GetModelsAsync(); _batches = await AppServices.Batteries.GetBatchesAsync(); _packs = await AppServices.Batteries.GetPacksAsync(); _claims = await AppServices.Batteries.GetClaimsAsync();
-        var warranties = await AppServices.Batteries.GetWarrantiesAsync(); var sales = await AppServices.Batteries.GetSalesAsync(); var movements = await AppServices.Batteries.GetMovementsAsync();
-        ModelGrid.ItemsSource = _models; BatchGrid.ItemsSource = _batches; PackGrid.ItemsSource = _packs; ReportPacksGrid.ItemsSource = _packs; SalesGrid.ItemsSource = sales; WarrantyGrid.ItemsSource = warranties; ClaimsGrid.ItemsSource = _claims; MovementGrid.ItemsSource = movements;
-        ProductionModelBox.ItemsSource = _models.Where(x => x.Active).ToList(); ProductionBatchBox.ItemsSource = _batches.Where(x => x.AvailableQuantity > 0).ToList();
-        SalePackBox.ItemsSource = _packs.Where(x => x.Status == "Saleable").ToList(); WarrantyPackBox.ItemsSource = _packs.Where(x => x.Status == "DealerStock").ToList(); ClaimPackBox.ItemsSource = _packs.Where(x => x.Status == "WarrantyActive").ToList(); ResolveClaimBox.ItemsSource = _claims.Where(x => x.Status != "Resolved").ToList(); ReplacementPackBox.ItemsSource = _packs.Where(x => x.Status == "Saleable").ToList();
-        StatsPanel.Children.Clear(); foreach (var pair in await AppServices.Batteries.DashboardAsync()) StatsPanel.Children.Add(new Border { Background = System.Windows.Media.Brushes.White, BorderBrush = System.Windows.Media.Brushes.LightGray, BorderThickness = new Thickness(1), Margin = new Thickness(5), Padding = new Thickness(18), Child = new StackPanel { Children = { new TextBlock { Text = pair.Key, Foreground = System.Windows.Media.Brushes.Gray }, new TextBlock { Text = pair.Value.ToString("N0"), FontSize = 28, FontWeight = FontWeights.SemiBold } } } });
-        var settings = SettingsService.Load(); CompanyNameBox.Text = settings.CompanyName; SupportBox.Text = settings.SupportContact; QrBaseUrlBox.Text = settings.QrBaseUrl; AppsScriptUrlBox.Text = settings.AppsScriptSyncUrl; SyncSecretBox.Text = settings.SyncSecret;
+        _models = await AppServices.Batteries.GetModelsAsync();
+        _batches = await AppServices.Batteries.GetBatchesAsync();
+        _packs = await AppServices.Batteries.GetPacksAsync();
+        _claims = await AppServices.Batteries.GetClaimsAsync();
+
+        var warranties = await AppServices.Batteries.GetWarrantiesAsync();
+        var invoices = await AppServices.Batteries.GetInvoicesAsync();
+        var movements = await AppServices.Batteries.GetMovementsAsync();
+
+        ModelGrid.ItemsSource = _models;
+        BatchGrid.ItemsSource = _batches;
+        PackGrid.ItemsSource = _packs;
+        ReportPacksGrid.ItemsSource = _packs;
+        SalesGrid.ItemsSource = invoices;
+        WarrantyGrid.ItemsSource = warranties;
+        ClaimsGrid.ItemsSource = _claims;
+        MovementGrid.ItemsSource = movements;
+
+        ProductionModelBox.ItemsSource = _models.Where(x => x.Active).ToList();
+        ProductionBatchBox.ItemsSource = _batches.Where(x => x.AvailableQuantity > 0).ToList();
+        SalePackBox.ItemsSource = _packs.Where(x => x.Status == "Saleable").ToList();
+        WarrantyPackBox.ItemsSource = _packs.Where(x => x.Status == "DealerStock").ToList();
+        ClaimPackBox.ItemsSource = _packs.Where(x => x.Status == "WarrantyActive").ToList();
+        ResolveClaimBox.ItemsSource = _claims.Where(x => x.Status != "Resolved").ToList();
+        ReplacementPackBox.ItemsSource = _packs.Where(x => x.Status == "Saleable").ToList();
+
+        var ledgerParties = await AppServices.Batteries.GetLedgerPartiesAsync();
+        var selectedLedgerParty = LedgerPartyBox.SelectedItem as string;
+        LedgerPartyBox.ItemsSource = ledgerParties;
+
+        if (!string.IsNullOrWhiteSpace(selectedLedgerParty) && ledgerParties.Contains(selectedLedgerParty))
+        {
+            LedgerPartyBox.SelectedItem = selectedLedgerParty;
+        }
+        else if (ledgerParties.Count > 0)
+        {
+            LedgerPartyBox.SelectedIndex = 0;
+        }
+
+        if (LedgerPartyBox.SelectedItem is string ledgerParty)
+        {
+            LedgerGrid.ItemsSource = await AppServices.Batteries.GetPartyLedgerAsync(ledgerParty);
+        }
+        else
+        {
+            LedgerGrid.ItemsSource = null;
+        }
+
+        StatsPanel.Children.Clear();
+        foreach (var pair in await AppServices.Batteries.DashboardAsync())
+        {
+            StatsPanel.Children.Add(new Border
+            {
+                Background = System.Windows.Media.Brushes.White,
+                BorderBrush = System.Windows.Media.Brushes.LightGray,
+                BorderThickness = new Thickness(1),
+                Margin = new Thickness(5),
+                Padding = new Thickness(18),
+                Child = new StackPanel
+                {
+                    Children =
+                    {
+                        new TextBlock { Text = pair.Key, Foreground = System.Windows.Media.Brushes.Gray },
+                        new TextBlock { Text = pair.Value.ToString("N0"), FontSize = 28, FontWeight = FontWeights.SemiBold }
+                    }
+                }
+            });
+        }
+
+        var settings = SettingsService.Load();
+        CompanyNameBox.Text = settings.CompanyName;
+        CompanyAddressBox.Text = settings.CompanyAddress;
+        CompanyGstinBox.Text = settings.CompanyGstin;
+        CompanyPhoneBox.Text = settings.CompanyPhone;
+        SupportBox.Text = settings.SupportContact;
+        GstRateBox.Text = settings.DefaultGstRate.ToString(CultureInfo.CurrentCulture);
+        QrBaseUrlBox.Text = settings.QrBaseUrl;
+        AppsScriptUrlBox.Text = settings.AppsScriptSyncUrl;
+        SyncSecretBox.Text = settings.SyncSecret;
         SyncLabel.Text = $"Sync queue: {await AppServices.Sync.PendingAsync()} pending";
     }
-    private static decimal Number(string value, string field) { if (!decimal.TryParse(value, NumberStyles.Number, CultureInfo.CurrentCulture, out var result)) throw new InvalidOperationException($"Enter a valid {field}."); return result; }
-    private static int WholeNumber(string value, string field) { if (!int.TryParse(value, out var result)) throw new InvalidOperationException($"Enter a valid {field}."); return result; }
-    private async Task ExecuteAsync(Func<Task> work) { try { if (_user.Role == "Reports") throw new UnauthorizedAccessException("Reports users have read-only access."); await work(); _ = Task.Run(async () => { try { await AppServices.Sync.FlushAsync(); } catch { /* retry timer keeps the local event queued */ } }); await RefreshAsync(); } catch (Exception ex) { MessageBox.Show(ex.Message, "Battery Management", MessageBoxButton.OK, MessageBoxImage.Warning); } }
+
+    private static decimal Number(string value, string field)
+    {
+        if (!decimal.TryParse(value, NumberStyles.Number, CultureInfo.CurrentCulture, out var result))
+        {
+            throw new InvalidOperationException($"Enter a valid {field}.");
+        }
+        return result;
+    }
+
+    private static int WholeNumber(string value, string field)
+    {
+        if (!int.TryParse(value, out var result))
+        {
+            throw new InvalidOperationException($"Enter a valid {field}.");
+        }
+        return result;
+    }
+
+    private async Task ExecuteAsync(Func<Task> work)
+    {
+        try
+        {
+            if (_user.Role == "Reports") throw new UnauthorizedAccessException("Reports users have read-only access.");
+            await work();
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await AppServices.Sync.FlushAsync();
+                }
+                catch
+                {
+                    // retry timer keeps the local event queued
+                }
+            });
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Battery Management", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private string Actor => _user.Username;
 
-    private async void AddModel_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () => { var chemistry = (ChemistryBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "LFP"; await AppServices.Batteries.AddModelAsync(new BatteryModel { Code = ModelCodeBox.Text, Name = ModelNameBox.Text, Chemistry = chemistry, Voltage = Number(VoltageBox.Text, "voltage"), CapacityAh = Number(CapacityBox.Text, "capacity"), Configuration = ConfigurationBox.Text, BmsSpecification = BmsBox.Text, WarrantyMonths = WholeNumber(WarrantyMonthsBox.Text, "warranty months") }, Actor); ModelCodeBox.Clear(); ModelNameBox.Clear(); });
-    private async void ReceiveBatch_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () => { await AppServices.Batteries.ReceiveBatchAsync(new ComponentBatch { ComponentName = ComponentNameBox.Text, Supplier = SupplierBox.Text, BatchCode = BatchCodeBox.Text, Quantity = Number(QuantityBox.Text, "quantity"), UnitCost = Number(CostBox.Text, "unit cost"), Location = string.IsNullOrWhiteSpace(LocationBox.Text) ? "Main Store" : LocationBox.Text, Reference = ReferenceBox.Text }, Actor); ComponentNameBox.Clear(); BatchCodeBox.Clear(); QuantityBox.Clear(); });
-    private void ProductionSelectionChanged(object sender, SelectionChangedEventArgs e) { if (ProductionModelBox.SelectedItem is BatteryModel model) { MeasuredVoltageBox.Text = model.Voltage.ToString(CultureInfo.CurrentCulture); MeasuredCapacityBox.Text = model.CapacityAh.ToString(CultureInfo.CurrentCulture); } }
-    private async void BuildPack_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () => { if (ProductionModelBox.SelectedItem is not BatteryModel model || ProductionBatchBox.SelectedItem is not ComponentBatch batch) throw new InvalidOperationException("Select both a battery model and source component batch."); var pack = await AppServices.Batteries.BuildPackAsync(model, batch, Number(ConsumeQtyBox.Text, "component quantity"), Number(MeasuredVoltageBox.Text, "measured voltage"), Number(MeasuredCapacityBox.Text, "measured capacity"), Number(HealthBox.Text, "health percent"), TesterBox.Text, QcPassBox.IsChecked == true, QcNotesBox.Text, Actor); if (pack.Status == "Saleable") { var label = AppServices.Documents.CreateQrLabel(pack); MessageBox.Show($"{pack.SerialNumber} created. QR label saved to:\n{label}", "Pack built"); } });
-    private void GenerateLabel_Click(object sender, RoutedEventArgs e) { if (PackGrid.SelectedItem is not BatteryPack pack) { MessageBox.Show("Select a pack first."); return; } var label = AppServices.Documents.CreateQrLabel(pack); MessageBox.Show($"QR label created:\n{label}", "Label"); }
-    private void PackGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (PackGrid.SelectedItem is BatteryPack pack) { SalePackBox.SelectedItem = pack; ClaimPackBox.SelectedItem = pack; } }
-    private async void SellPack_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () => { if (SalePackBox.SelectedItem is not BatteryPack pack) throw new InvalidOperationException("Select a saleable pack."); var sale = await AppServices.Batteries.SellPackAsync(pack, DealerSaleBox.IsChecked == true, SalePartyBox.Text, SalePhoneBox.Text, SaleAddressBox.Text, VehicleBox.Text, Number(SaleAmountBox.Text, "sale amount"), Actor); var warranty = (await AppServices.Batteries.GetWarrantiesAsync()).FirstOrDefault(x => x.PackSerial == pack.SerialNumber); var receipt = AppServices.Documents.CreateSaleReceipt(sale, pack, warranty); if (warranty is not null) AppServices.Documents.CreateWarrantyCertificate(pack, warranty); MessageBox.Show($"Sale saved. Receipt created:\n{receipt}", "Sale complete"); });
-    private async void ActivateWarranty_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () => { if (WarrantyPackBox.SelectedItem is not BatteryPack pack) throw new InvalidOperationException("Select a dealer-stock pack."); await AppServices.Batteries.RegisterDealerWarrantyAsync(pack, WarrantyCustomerBox.Text, WarrantyPhoneBox.Text, WarrantyAddressBox.Text, WarrantyVehicleBox.Text, WarrantyStartPicker.SelectedDate ?? DateTime.Today, Actor); var warranty=(await AppServices.Batteries.GetWarrantiesAsync()).First(x=>x.PackSerial==pack.SerialNumber); var file=AppServices.Documents.CreateWarrantyCertificate(pack,warranty); MessageBox.Show($"Warranty activated. Certificate created:\n{file}", "Warranty"); });
-    private async void OpenClaim_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () => { if (ClaimPackBox.SelectedItem is not BatteryPack pack) throw new InvalidOperationException("Select a warranty-active pack."); await AppServices.Batteries.AddClaimAsync(pack, ClaimComplaintBox.Text, Actor); ClaimComplaintBox.Clear(); });
-    private async void ResolveClaim_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () => { if (ResolveClaimBox.SelectedItem is not WarrantyClaim claim) throw new InvalidOperationException("Select a claim."); var outcome=(ClaimOutcomeBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Repair"; var replacement=(ReplacementPackBox.SelectedItem as BatteryPack)?.SerialNumber ?? ""; await AppServices.Batteries.ResolveClaimAsync(claim,outcome,replacement,ClaimNotesBox.Text,Actor); });
-    private async void Sync_Click(object sender, RoutedEventArgs e) { var result=await AppServices.Sync.FlushAsync(); await RefreshAsync(); MessageBox.Show(result.Message,"Google sync"); }
-    private void SaveSettings_Click(object sender, RoutedEventArgs e) { if (_user.Role != "Admin") { MessageBox.Show("Only administrators can change settings.", "Settings"); return; } SettingsService.Save(new AppSettings { CompanyName=CompanyNameBox.Text.Trim(), SupportContact=SupportBox.Text.Trim(), QrBaseUrl=QrBaseUrlBox.Text.Trim(), AppsScriptSyncUrl=AppsScriptUrlBox.Text.Trim(), SyncSecret=SyncSecretBox.Text.Trim() }); MessageBox.Show("Settings saved locally.", "Settings"); }
-    private async void ChangePassword_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () => { await AppServices.Database.ChangePasswordAsync(_user, CurrentPasswordBox.Password, NewPasswordBox.Password); CurrentPasswordBox.Clear(); NewPasswordBox.Clear(); MessageBox.Show("Password changed.", "Security"); });
-    private async void CreateUser_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () => { var role=(NewUserRoleBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Operator"; await AppServices.Database.CreateUserAsync(_user, NewUserBox.Text, NewUserPasswordBox.Password, role); NewUserBox.Clear(); NewUserPasswordBox.Clear(); MessageBox.Show("User created.", "Security"); });
-    private void Backup_Click(object sender, RoutedEventArgs e) { AppPaths.EnsureDirectories(); var target=Path.Combine(AppPaths.Backups,$"battery-management-{DateTime.Now:yyyyMMdd-HHmmss}.db"); File.Copy(AppPaths.Database,target,true); MessageBox.Show($"Backup saved to:\n{target}","Backup"); }
-    private async void ExportPacks_Click(object sender, RoutedEventArgs e) { await ExportAsync(_packs,"battery-packs"); }
-    private async void ExportBatches_Click(object sender, RoutedEventArgs e) { await ExportAsync(_batches,"component-batches"); }
-    private async void ExportMovements_Click(object sender, RoutedEventArgs e) { await ExportAsync(await AppServices.Batteries.GetMovementsAsync(),"stock-movements"); }
-    private Task ExportAsync<T>(IEnumerable<T> rows,string name)
-    { var dialog=new SaveFileDialog { Filter="CSV file|*.csv",FileName=$"{name}-{DateTime.Now:yyyyMMdd}.csv"};if(dialog.ShowDialog()!=true)return Task.CompletedTask;var props=typeof(T).GetProperties();var sb=new StringBuilder(string.Join(',',props.Select(p=>Escape(p.Name))));foreach(var row in rows)sb.AppendLine().Append(string.Join(',',props.Select(p=>Escape(p.GetValue(row)?.ToString()??""))));File.WriteAllText(dialog.FileName,sb.ToString(),new UTF8Encoding(true));MessageBox.Show($"Exported {name}.","Export");return Task.CompletedTask;}
-    private static string Escape(string value)=>'"'+value.Replace("\"","\"\"")+'"';
+    private async void AddModel_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    {
+        var chemistry = (ChemistryBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "LFP";
+        await AppServices.Batteries.AddModelAsync(new BatteryModel
+        {
+            Code = ModelCodeBox.Text,
+            Name = ModelNameBox.Text,
+            Chemistry = chemistry,
+            Voltage = Number(VoltageBox.Text, "voltage"),
+            CapacityAh = Number(CapacityBox.Text, "capacity"),
+            Configuration = ConfigurationBox.Text,
+            BmsSpecification = BmsBox.Text,
+            WarrantyMonths = WholeNumber(WarrantyMonthsBox.Text, "warranty months")
+        }, Actor);
+        ModelCodeBox.Clear();
+        ModelNameBox.Clear();
+    });
+
+    private async void ReceiveBatch_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    {
+        await AppServices.Batteries.ReceiveBatchAsync(new ComponentBatch
+        {
+            ComponentName = ComponentNameBox.Text,
+            Supplier = SupplierBox.Text,
+            BatchCode = BatchCodeBox.Text,
+            Quantity = Number(QuantityBox.Text, "quantity"),
+            UnitCost = Number(CostBox.Text, "unit cost"),
+            Location = string.IsNullOrWhiteSpace(LocationBox.Text) ? "Main Store" : LocationBox.Text,
+            Reference = ReferenceBox.Text
+        }, Actor);
+        ComponentNameBox.Clear();
+        BatchCodeBox.Clear();
+        QuantityBox.Clear();
+    });
+
+    private void ProductionSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ProductionModelBox.SelectedItem is BatteryModel model)
+        {
+            MeasuredVoltageBox.Text = model.Voltage.ToString(CultureInfo.CurrentCulture);
+            MeasuredCapacityBox.Text = model.CapacityAh.ToString(CultureInfo.CurrentCulture);
+        }
+    }
+
+    private async void BuildPack_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    {
+        if (ProductionModelBox.SelectedItem is not BatteryModel model || ProductionBatchBox.SelectedItem is not ComponentBatch batch)
+        {
+            throw new InvalidOperationException("Select both a battery model and source component batch.");
+        }
+
+        var pack = await AppServices.Batteries.BuildPackAsync(
+            model,
+            batch,
+            Number(ConsumeQtyBox.Text, "component quantity"),
+            Number(MeasuredVoltageBox.Text, "measured voltage"),
+            Number(MeasuredCapacityBox.Text, "measured capacity"),
+            Number(HealthBox.Text, "health percent"),
+            TesterBox.Text,
+            QcPassBox.IsChecked == true,
+            QcNotesBox.Text,
+            Actor);
+
+        if (pack.Status == "Saleable")
+        {
+            var label = AppServices.Documents.CreateQrLabel(pack);
+            MessageBox.Show($"{pack.SerialNumber} created. QR label saved to:\n{label}", "Pack built");
+        }
+    });
+
+    private void GenerateLabel_Click(object sender, RoutedEventArgs e)
+    {
+        if (PackGrid.SelectedItem is not BatteryPack pack)
+        {
+            MessageBox.Show("Select a pack first.");
+            return;
+        }
+
+        var label = AppServices.Documents.CreateQrLabel(pack);
+        MessageBox.Show($"QR label created:\n{label}", "Label");
+    }
+
+    private void PackGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PackGrid.SelectedItem is BatteryPack pack)
+        {
+            SalePackBox.SelectedItem = pack;
+            ClaimPackBox.SelectedItem = pack;
+        }
+    }
+
+    private async void SellPack_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    {
+        if (SalePackBox.SelectedItem is not BatteryPack pack) throw new InvalidOperationException("Select a saleable pack.");
+
+        var sale = await AppServices.Batteries.SellPackAsync(
+            pack,
+            DealerSaleBox.IsChecked == true,
+            SalePartyBox.Text,
+            SalePhoneBox.Text,
+            SaleAddressBox.Text,
+            VehicleBox.Text,
+            Number(SaleAmountBox.Text, "sale amount"),
+            Actor);
+
+        var invoice = await AppServices.Batteries.GetInvoiceAsync(sale.InvoiceNumber)
+            ?? throw new InvalidOperationException($"Invoice {sale.InvoiceNumber} was not created.");
+        var invoiceItems = await AppServices.Batteries.GetInvoiceItemsAsync(sale.InvoiceNumber);
+        var warranty = (await AppServices.Batteries.GetWarrantiesAsync()).FirstOrDefault(x => x.PackSerial == pack.SerialNumber);
+        var receipt = AppServices.Documents.CreateSaleReceipt(invoice, invoiceItems, pack, warranty);
+
+        if (warranty is not null)
+        {
+            AppServices.Documents.CreateWarrantyCertificate(pack, warranty);
+        }
+
+        MessageBox.Show($"Sale saved. Tax invoice created:\n{receipt}", "Sale complete");
+    });
+
+    private async void ActivateWarranty_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    {
+        if (WarrantyPackBox.SelectedItem is not BatteryPack pack) throw new InvalidOperationException("Select a dealer-stock pack.");
+        await AppServices.Batteries.RegisterDealerWarrantyAsync(
+            pack,
+            WarrantyCustomerBox.Text,
+            WarrantyPhoneBox.Text,
+            WarrantyAddressBox.Text,
+            WarrantyVehicleBox.Text,
+            WarrantyStartPicker.SelectedDate ?? DateTime.Today,
+            Actor);
+
+        var warranty = (await AppServices.Batteries.GetWarrantiesAsync()).First(x => x.PackSerial == pack.SerialNumber);
+        var file = AppServices.Documents.CreateWarrantyCertificate(pack, warranty);
+        MessageBox.Show($"Warranty activated. Certificate created:\n{file}", "Warranty");
+    });
+
+    private async void OpenClaim_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    {
+        if (ClaimPackBox.SelectedItem is not BatteryPack pack) throw new InvalidOperationException("Select a warranty-active pack.");
+        await AppServices.Batteries.AddClaimAsync(pack, ClaimComplaintBox.Text, Actor);
+        ClaimComplaintBox.Clear();
+    });
+
+    private async void ResolveClaim_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    {
+        if (ResolveClaimBox.SelectedItem is not WarrantyClaim claim) throw new InvalidOperationException("Select a claim.");
+        var outcome = (ClaimOutcomeBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Repair";
+        var replacement = (ReplacementPackBox.SelectedItem as BatteryPack)?.SerialNumber ?? "";
+        await AppServices.Batteries.ResolveClaimAsync(claim, outcome, replacement, ClaimNotesBox.Text, Actor);
+    });
+
+    private async void Sync_Click(object sender, RoutedEventArgs e)
+    {
+        var result = await AppServices.Sync.FlushAsync();
+        await RefreshAsync();
+        MessageBox.Show(result.Message, "Google sync");
+    }
+
+    private void SaveSettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (_user.Role != "Admin")
+        {
+            MessageBox.Show("Only administrators can change settings.", "Settings");
+            return;
+        }
+
+        SettingsService.Save(new AppSettings
+        {
+            CompanyName = CompanyNameBox.Text.Trim(),
+            CompanyAddress = CompanyAddressBox.Text.Trim(),
+            CompanyGstin = CompanyGstinBox.Text.Trim(),
+            CompanyPhone = CompanyPhoneBox.Text.Trim(),
+            SupportContact = SupportBox.Text.Trim(),
+            DefaultGstRate = Number(GstRateBox.Text, "GST rate"),
+            QrBaseUrl = QrBaseUrlBox.Text.Trim(),
+            AppsScriptSyncUrl = AppsScriptUrlBox.Text.Trim(),
+            SyncSecret = SyncSecretBox.Text.Trim()
+        });
+
+        MessageBox.Show("Settings saved locally.", "Settings");
+    }
+
+    private async void ChangePassword_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    {
+        await AppServices.Database.ChangePasswordAsync(_user, CurrentPasswordBox.Password, NewPasswordBox.Password);
+        CurrentPasswordBox.Clear();
+        NewPasswordBox.Clear();
+        MessageBox.Show("Password changed.", "Security");
+    });
+
+    private async void CreateUser_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    {
+        var role = (NewUserRoleBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Operator";
+        await AppServices.Database.CreateUserAsync(_user, NewUserBox.Text, NewUserPasswordBox.Password, role);
+        NewUserBox.Clear();
+        NewUserPasswordBox.Clear();
+        MessageBox.Show("User created.", "Security");
+    });
+
+    private void Backup_Click(object sender, RoutedEventArgs e)
+    {
+        AppPaths.EnsureDirectories();
+        var target = Path.Combine(AppPaths.Backups, $"battery-management-{DateTime.Now:yyyyMMdd-HHmmss}.db");
+        File.Copy(AppPaths.Database, target, true);
+        MessageBox.Show($"Backup saved to:\n{target}", "Backup");
+    }
+
+    private async void ExportPacks_Click(object sender, RoutedEventArgs e) => await ExportAsync(_packs, "battery-packs");
+    private async void ExportBatches_Click(object sender, RoutedEventArgs e) => await ExportAsync(_batches, "component-batches");
+    private async void ExportMovements_Click(object sender, RoutedEventArgs e) => await ExportAsync(await AppServices.Batteries.GetMovementsAsync(), "stock-movements");
+
+    private Task ExportAsync<T>(IEnumerable<T> rows, string name)
+    {
+        var dialog = new SaveFileDialog { Filter = "CSV file|*.csv", FileName = $"{name}-{DateTime.Now:yyyyMMdd}.csv" };
+        if (dialog.ShowDialog() != true) return Task.CompletedTask;
+
+        var props = typeof(T).GetProperties();
+        var sb = new StringBuilder(string.Join(',', props.Select(p => Escape(p.Name))));
+        foreach (var row in rows)
+        {
+            sb.AppendLine().Append(string.Join(',', props.Select(p => Escape(p.GetValue(row)?.ToString() ?? ""))));
+        }
+
+        File.WriteAllText(dialog.FileName, sb.ToString(), new UTF8Encoding(true));
+        MessageBox.Show($"Exported {name}.", "Export");
+        return Task.CompletedTask;
+    }
+
+    private static string Escape(string value) => '"' + value.Replace("\"", "\"\"") + '"';
+
     private async void ImportBatches_Click(object sender, RoutedEventArgs e)
-    { var dialog=new OpenFileDialog{Filter="CSV file|*.csv"};if(dialog.ShowDialog()!=true)return;var lines=File.ReadAllLines(dialog.FileName).Skip(1);var imported=0;try{foreach(var line in lines.Where(x=>!string.IsNullOrWhiteSpace(x))){var cells=ParseCsv(line);if(cells.Count<7)throw new InvalidOperationException("CSV requires component,supplier,batch,quantity,unitCost,location,reference columns.");await AppServices.Batteries.ReceiveBatchAsync(new ComponentBatch{ComponentName=cells[0],Supplier=cells[1],BatchCode=cells[2],Quantity=Number(cells[3],"quantity"),UnitCost=Number(cells[4],"unit cost"),Location=cells[5],Reference=cells[6]},Actor);imported++;}await RefreshAsync();MessageBox.Show($"Imported {imported} batches.","Import");}catch(Exception ex){MessageBox.Show($"Import stopped after {imported} rows. {ex.Message}","Import",MessageBoxButton.OK,MessageBoxImage.Warning);} }
-    private static List<string> ParseCsv(string line){var result=new List<string>();var value=new StringBuilder();var quoted=false;for(var i=0;i<line.Length;i++){var ch=line[i];if(ch=='\"'){if(quoted&&i+1<line.Length&&line[i+1]=='\"'){value.Append(ch);i++;}else quoted=!quoted;}else if(ch==','&&!quoted){result.Add(value.ToString());value.Clear();}else value.Append(ch);}result.Add(value.ToString());return result;}
+    {
+        var dialog = new OpenFileDialog { Filter = "CSV file|*.csv" };
+        if (dialog.ShowDialog() != true) return;
+
+        var lines = File.ReadAllLines(dialog.FileName).Skip(1);
+        var imported = 0;
+        try
+        {
+            foreach (var line in lines.Where(x => !string.IsNullOrWhiteSpace(x)))
+            {
+                var cells = ParseCsv(line);
+                if (cells.Count < 7) throw new InvalidOperationException("CSV requires component,supplier,batch,quantity,unitCost,location,reference columns.");
+                await AppServices.Batteries.ReceiveBatchAsync(new ComponentBatch
+                {
+                    ComponentName = cells[0],
+                    Supplier = cells[1],
+                    BatchCode = cells[2],
+                    Quantity = Number(cells[3], "quantity"),
+                    UnitCost = Number(cells[4], "unit cost"),
+                    Location = cells[5],
+                    Reference = cells[6]
+                }, Actor);
+                imported++;
+            }
+            await RefreshAsync();
+            MessageBox.Show($"Imported {imported} batches.", "Import");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Import stopped after {imported} rows. {ex.Message}", "Import", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private static List<string> ParseCsv(string line)
+    {
+        var result = new List<string>();
+        var value = new StringBuilder();
+        var quoted = false;
+        for (var i = 0; i < line.Length; i++)
+        {
+            var ch = line[i];
+            if (ch == '"')
+            {
+                if (quoted && i + 1 < line.Length && line[i + 1] == '"')
+                {
+                    value.Append(ch);
+                    i++;
+                }
+                else
+                {
+                    quoted = !quoted;
+                }
+            }
+            else if (ch == ',' && !quoted)
+            {
+                result.Add(value.ToString());
+                value.Clear();
+            }
+            else
+            {
+                value.Append(ch);
+            }
+        }
+        result.Add(value.ToString());
+        return result;
+    }
+
+    private async void LedgerParty_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (LedgerPartyBox.SelectedItem is string party)
+        {
+            var ledger = await AppServices.Batteries.GetPartyLedgerAsync(party);
+            LedgerGrid.ItemsSource = ledger;
+        }
+    }
+
+    private async void RecordPaymentCredit_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    {
+        if (LedgerPartyBox.SelectedItem is not string party || string.IsNullOrWhiteSpace(party))
+        {
+            throw new InvalidOperationException("Select a customer or dealer party first.");
+        }
+
+        var amount = Number(LedgerPaymentBox.Text, "payment credit amount");
+        await AppServices.Batteries.RecordLedgerPaymentAsync(
+            party,
+            amount,
+            "PAY-REC-" + DateTime.Now.ToString("yyyyMMddHHmmssfff"),
+            "Cash/Bank",
+            "Received payment credit",
+            Actor);
+        LedgerPaymentBox.Text = "0";
+        var ledger = await AppServices.Batteries.GetPartyLedgerAsync(party);
+        LedgerGrid.ItemsSource = ledger;
+        MessageBox.Show($"Recorded payment credit of Rs. {amount:N2} for {party}", "Ledger updated");
+    });
 }

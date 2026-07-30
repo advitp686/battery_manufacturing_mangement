@@ -29,5 +29,6 @@ the public QR sheet.
 ## Local backups
 
 Create a backup before system upgrades and at the end of each business day. The
-application database and generated documents reside in `%ProgramData%\BatteryManagement`.
+application database and generated documents reside in `%LOCALAPPDATA%\BatteryManagement`
+for the signed-in Windows user.
 Copy that directory to a controlled Drive folder until OAuth Drive backup is configured.

@@ -12,3 +12,4 @@ token.json
 publish/
 .tools/
 installer/output/
+node_modules/

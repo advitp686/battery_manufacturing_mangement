@@ -6,7 +6,11 @@ namespace BatteryManagement.Infrastructure;
 public sealed class AppSettings
 {
     public string CompanyName { get; set; } = "Battery Management";
+    public string CompanyAddress { get; set; } = "";
+    public string CompanyGstin { get; set; } = "";
+    public string CompanyPhone { get; set; } = "";
     public string SupportContact { get; set; } = "";
+    public decimal DefaultGstRate { get; set; } = 18m;
     public string QrBaseUrl { get; set; } = "";
     public string AppsScriptSyncUrl { get; set; } = "";
     public string SyncSecret { get; set; } = "";

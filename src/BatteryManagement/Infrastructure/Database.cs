@@ -19,10 +19,13 @@ public sealed class Database
         CREATE TABLE IF NOT EXISTS Users(Id INTEGER PRIMARY KEY, Username TEXT NOT NULL UNIQUE, PasswordHash TEXT NOT NULL, Role TEXT NOT NULL, Active INTEGER NOT NULL DEFAULT 1);
         CREATE TABLE IF NOT EXISTS BatteryModels(Id INTEGER PRIMARY KEY, Code TEXT NOT NULL UNIQUE, Name TEXT NOT NULL, Chemistry TEXT NOT NULL, Voltage REAL NOT NULL, CapacityAh REAL NOT NULL, Configuration TEXT, BmsSpecification TEXT, Dimensions TEXT, WarrantyMonths INTEGER NOT NULL, Active INTEGER NOT NULL DEFAULT 1);
         CREATE TABLE IF NOT EXISTS ComponentBatches(Id INTEGER PRIMARY KEY, ComponentName TEXT NOT NULL, Supplier TEXT, BatchCode TEXT NOT NULL UNIQUE, Quantity REAL NOT NULL, AvailableQuantity REAL NOT NULL, UnitCost REAL NOT NULL, Location TEXT NOT NULL, Reference TEXT, ReceivedAt TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS BatteryPacks(Id INTEGER PRIMARY KEY, SerialNumber TEXT NOT NULL UNIQUE, QrToken TEXT NOT NULL UNIQUE, ModelCode TEXT NOT NULL, ModelName TEXT NOT NULL, SourceBatch TEXT, ManufacturedAt TEXT NOT NULL, Status TEXT NOT NULL, MeasuredVoltage REAL, MeasuredCapacityAh REAL, HealthPercent REAL, BmsSpecification TEXT, Tester TEXT, QcNotes TEXT);
+        CREATE TABLE IF NOT EXISTS BatteryPacks(Id INTEGER PRIMARY KEY, SerialNumber TEXT NOT NULL UNIQUE, QrToken TEXT NOT NULL UNIQUE, ModelCode TEXT NOT NULL, ModelName TEXT NOT NULL, Chemistry TEXT NOT NULL DEFAULT '', SourceBatch TEXT, ManufacturedAt TEXT NOT NULL, Status TEXT NOT NULL, MeasuredVoltage REAL, MeasuredCapacityAh REAL, HealthPercent REAL, BmsSpecification TEXT, Tester TEXT, QcNotes TEXT);
         CREATE TABLE IF NOT EXISTS Customers(Id INTEGER PRIMARY KEY, Name TEXT NOT NULL, Phone TEXT, Address TEXT, VehicleNumber TEXT);
         CREATE TABLE IF NOT EXISTS Dealers(Id INTEGER PRIMARY KEY, Name TEXT NOT NULL UNIQUE, Phone TEXT, Address TEXT);
         CREATE TABLE IF NOT EXISTS Sales(Id INTEGER PRIMARY KEY, InvoiceNumber TEXT NOT NULL UNIQUE, PackSerial TEXT NOT NULL UNIQUE, SaleType TEXT NOT NULL, PartyName TEXT NOT NULL, Amount REAL NOT NULL, SoldAt TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS Invoices(Id INTEGER PRIMARY KEY, InvoiceNumber TEXT NOT NULL UNIQUE, SaleType TEXT NOT NULL, PartyName TEXT NOT NULL, FatherName TEXT, Phone TEXT, Address TEXT, VehicleNumber TEXT, TaxableAmount REAL NOT NULL, CgstAmount REAL NOT NULL, SgstAmount REAL NOT NULL, IgstAmount REAL NOT NULL, CessAmount REAL NOT NULL, GrandTotal REAL NOT NULL, PaidAmount REAL NOT NULL, BalanceAmount REAL NOT NULL, SoldAt TEXT NOT NULL, WarrantyStatus TEXT);
+        CREATE TABLE IF NOT EXISTS SaleItems(Id INTEGER PRIMARY KEY, InvoiceNumber TEXT NOT NULL, ItemType TEXT NOT NULL, ItemDescription TEXT NOT NULL, PackSerial TEXT, HsnCode TEXT, ChassisVin TEXT, EngineMotor TEXT, Color TEXT, KeyController TEXT, WrcNo TEXT, ChargerInfo TEXT, BatteryInfo TEXT, Quantity REAL NOT NULL, UnitPrice REAL NOT NULL, TotalAmount REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS PartyLedger(Id INTEGER PRIMARY KEY, PartyName TEXT NOT NULL, PartyType TEXT NOT NULL, TransactionDate TEXT NOT NULL, Reference TEXT NOT NULL, Description TEXT NOT NULL, Debit REAL NOT NULL, Credit REAL NOT NULL, Balance REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS Warranties(Id INTEGER PRIMARY KEY, PackSerial TEXT NOT NULL UNIQUE, CustomerName TEXT NOT NULL, StartDate TEXT NOT NULL, EndDate TEXT NOT NULL, Status TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS WarrantyClaims(Id INTEGER PRIMARY KEY, ClaimNumber TEXT NOT NULL UNIQUE, PackSerial TEXT NOT NULL, Complaint TEXT NOT NULL, Status TEXT NOT NULL, Resolution TEXT, ReplacementSerial TEXT, Notes TEXT, CreatedAt TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS StockMovements(Id INTEGER PRIMARY KEY, MovementType TEXT NOT NULL, Reference TEXT NOT NULL, Item TEXT NOT NULL, Quantity REAL NOT NULL, OccurredAt TEXT NOT NULL, Notes TEXT);
@@ -30,6 +33,7 @@ public sealed class Database
         CREATE TABLE IF NOT EXISTS AuditLog(Id INTEGER PRIMARY KEY, OccurredAt TEXT NOT NULL, Actor TEXT NOT NULL, Action TEXT NOT NULL, Details TEXT NOT NULL);
         """;
         await ExecuteAsync(connection, sql);
+        await EnsureColumnAsync(connection, "BatteryPacks", "Chemistry TEXT NOT NULL DEFAULT ''");
         var exists = await ScalarAsync<long>(connection, "SELECT COUNT(*) FROM Users");
         if (exists == 0)
         {
@@ -84,4 +88,20 @@ public sealed class Database
     { await using var cmd = c.CreateCommand(); cmd.CommandText = sql; cmd.Transaction = tx as SqliteTransaction; foreach (var p in parameters) cmd.Parameters.AddWithValue(p.Name, p.Value ?? DBNull.Value); await cmd.ExecuteNonQueryAsync(); }
     public static async Task<T> ScalarAsync<T>(SqliteConnection c, string sql, params (string Name, object? Value)[] parameters)
     { await using var cmd = c.CreateCommand(); cmd.CommandText = sql; foreach (var p in parameters) cmd.Parameters.AddWithValue(p.Name, p.Value ?? DBNull.Value); var result = await cmd.ExecuteScalarAsync(); return (T)Convert.ChangeType(result!, typeof(T)); }
+    private static async Task EnsureColumnAsync(SqliteConnection connection, string tableName, string columnDefinition)
+    {
+        var columnName = columnDefinition.Split(' ', 2)[0];
+        await using var existsCmd = connection.CreateCommand();
+        existsCmd.CommandText = $"PRAGMA table_info({tableName})";
+        await using var reader = await existsCmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        await ExecuteAsync(connection, $"ALTER TABLE {tableName} ADD COLUMN {columnDefinition}");
+    }
 }
