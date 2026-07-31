@@ -32,10 +32,9 @@
       <nav class="nav-list">
         <button class="nav-item active" data-view="dashboard"><span class="nav-icon">▦</span> Dashboard</button>
         <button class="nav-item" data-view="models"><span class="nav-icon">◈</span> Battery &amp; Vehicle Models</button>
-        <button class="nav-item" data-view="inventory"><span class="nav-icon">▤</span> Raw Stock &amp; Inventory</button>
+        <button class="nav-item" data-view="inventory"><span class="nav-icon">▤</span> Stock &amp; Inventory</button>
         <button class="nav-item" data-view="production"><span class="nav-icon">⚙</span> Production &amp; QC</button>
-        <button class="nav-item" data-view="sales"><span class="nav-icon">↗</span> Battery Sales &amp; Invoices</button>
-        <button class="nav-item" data-view="vehicles"><span class="nav-icon">🛺</span> EV Vehicle Sales</button>
+        <button class="nav-item" data-view="sales"><span class="nav-icon">↗</span> Commercial Sales &amp; Invoices</button>
         <button class="nav-item" data-view="purchase-ledger"><span class="nav-icon">🧾</span> Supplier Purchase Ledger</button>
         <button class="nav-item" data-view="warranty"><span class="nav-icon">🛡️</span> Warranty &amp; Claims</button>
         <button class="nav-item" data-view="reports"><span class="nav-icon">▥</span> Reports</button>
@@ -313,13 +312,14 @@
 
           <div class="stat-grid compact" style="margin-bottom:16px;">
             <article class="stat-card"><div class="stat-label">Finished battery packs</div><div class="stat-value" id="finished-pack-count">0</div><div class="stat-foot positive">QC Passed &amp; Saleable</div></article>
-            <article class="stat-card"><div class="stat-label">Cell batches</div><div class="stat-value">12</div><div class="stat-foot neutral">Across 3 suppliers</div></article>
-            <article class="stat-card"><div class="stat-label">Component stock value</div><div class="stat-value">₹8.4L</div><div class="stat-foot positive">↑ 4.8% this month</div></article>
+            <article class="stat-card"><div class="stat-label">Ready EV Vehicles</div><div class="stat-value" id="finished-vehicle-count">0</div><div class="stat-foot positive">In Showroom Stock</div></article>
+            <article class="stat-card"><div class="stat-label">Component stock value</div><div class="stat-value">₹8.4L</div><div class="stat-foot positive">Across 3 suppliers</div></article>
           </div>
 
           <div class="tab-row" style="margin-bottom:16px;">
-            <button class="tab active" data-tab="finished-battery-tab">Finished Battery Packs Stock (QC Passed)</button>
-            <button class="tab" data-tab="raw-components-tab">Raw Components &amp; Accessories Ledger</button>
+            <button class="tab active" data-tab="finished-battery-tab">🔋 Finished Battery Packs</button>
+            <button class="tab" data-tab="finished-vehicles-tab">🛺 Ready EV Vehicles Stock (<span id="inv-vehicle-count">0</span>)</button>
+            <button class="tab" data-tab="raw-components-tab">📦 Raw Components &amp; Accessories Ledger</button>
           </div>
 
           <article class="panel table-panel tab-content active" id="finished-battery-tab">
@@ -344,6 +344,37 @@
                   </tr>
                 </thead>
                 <tbody id="battery-inventory-table"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <!-- Ready EV Vehicles Stock Panel inside Inventory -->
+          <article class="panel table-panel tab-content" id="finished-vehicles-tab">
+            <div class="panel-heading">
+              <div>
+                <h2>Ready EV Vehicles Showroom Stock</h2>
+                <p>E-Rickshaws, Cargo Loaders &amp; Scooters available in showroom stock with installed battery packs</p>
+              </div>
+              <div style="display:flex;gap:8px;">
+                <button class="secondary-btn" id="btn-add-vehicle-model-trigger">＋ Add EV Model</button>
+                <button class="primary-btn" id="btn-add-vehicle-stock-trigger" style="padding:6px 14px;font-size:12px;">＋ Add Vehicle to Stock</button>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Chassis / VIN No</th>
+                    <th>Vehicle Model</th>
+                    <th>Motor Number</th>
+                    <th>Battery Installed</th>
+                    <th>Color</th>
+                    <th>Ex-Showroom Price</th>
+                    <th>Showroom Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="inventory-vehicles-table"></tbody>
               </table>
             </div>
           </article>
@@ -624,86 +655,7 @@
         </section>
 
 
-        <!-- Section: EV Vehicle Sales & Showroom Dispatches -->
-        <section class="view" id="view-vehicles">
-          <div class="page-heading">
-            <div>
-              <p class="eyebrow">Vehicle Commercials &amp; Showroom Stock</p>
-              <h1>🛺 EV Vehicle Sales &amp; Dispatches</h1>
-              <p class="subheading">Manage EV E-Rickshaws, Cargo Loaders, Showroom Stock, Vehicle Tax Invoices, and Vehicle Warranties.</p>
-            </div>
-            <div style="display:flex;gap:8px;">
-              <button class="primary-btn" id="btn-open-vehicle-sale-modal" style="background:#2b6cb0;">＋ Record EV Vehicle Sale</button>
-              <button class="secondary-btn" id="btn-open-vehicle-stock-modal" style="background:#edf2f7;color:#2d3748;font-weight:700;">＋ Add Vehicle to Stock</button>
-            </div>
-          </div>
 
-          <div class="tab-row" style="margin-bottom:16px;">
-            <button class="tab active" data-tab="vehicle-sales-tab">🛺 EV Vehicle Sales &amp; Tax Invoices</button>
-            <button class="tab" data-tab="vehicle-stock-tab">🏢 Showroom Vehicle Inventory Stock</button>
-          </div>
-
-          <!-- Vehicle Tab 1: Sales & Tax Invoices -->
-          <div class="tab-content active" id="vehicle-sales-tab">
-            <article class="panel table-panel">
-              <div class="panel-heading">
-                <div>
-                  <h2>EV Vehicle Sales &amp; Dispatches Register</h2>
-                  <p>Invoices issued for E-Rickshaws, 3W Loaders, Chassis/VIN numbers, and receiving Bank Accounts</p>
-                </div>
-                <button class="secondary-btn" id="btn-export-vehicle-sales-csv">Export Vehicles CSV</button>
-              </div>
-              <div class="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Invoice No</th>
-                      <th>Customer / Dealer</th>
-                      <th>Vehicle Model</th>
-                      <th>Chassis / VIN No</th>
-                      <th>Motor No</th>
-                      <th>Grand Total</th>
-                      <th>Bank Account / Mode</th>
-                      <th>Dispatch Date</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody id="vehicle-sales-table"></tbody>
-                </table>
-              </div>
-            </article>
-          </div>
-
-          <!-- Vehicle Tab 2: Showroom Stock -->
-          <div class="tab-content" id="vehicle-stock-tab">
-            <article class="panel table-panel">
-              <div class="panel-heading">
-                <div>
-                  <h2>Showroom EV Vehicle Inventory Stock</h2>
-                  <p>Available E-Rickshaws and Cargo Loaders ready for retail sale or dealer dispatch</p>
-                </div>
-                <button class="primary-btn" id="btn-add-vehicle-stock-trigger" style="font-size:12px;padding:6px 12px;">＋ Add Vehicle to Showroom</button>
-              </div>
-              <div class="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Chassis / VIN No</th>
-                      <th>Vehicle Model Name</th>
-                      <th>Motor No / Specs</th>
-                      <th>Battery Pack Installed</th>
-                      <th>Color</th>
-                      <th>Ex-Showroom Price</th>
-                      <th>Status</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody id="vehicle-stock-table"></tbody>
-                </table>
-              </div>
-            </article>
-          </div>
-        </section>
 
         <!-- Section: Supplier Accounts Master & Purchase Ledger -->
         <section class="view" id="view-purchase-ledger">
@@ -1102,6 +1054,7 @@
 
           <div class="tab-row" style="margin-bottom:16px;">
             <button class="tab active" data-tab="settings-company-tab">🏢 Company &amp; Invoice Header Profile</button>
+            <button class="tab" data-tab="settings-banks-tab">💳 Bank Accounts &amp; Payment Modes (<span id="bank-count-badge">0</span>)</button>
             <button class="tab" data-tab="settings-cloud-tab">☁ Client Google Sheets Sync</button>
             <button class="tab" data-tab="settings-tax-tab">🏷️ Tax &amp; Warranty Policy Rules</button>
             <button class="tab" data-tab="settings-backup-tab">💾 Backup, Restore &amp; Data Tools</button>
@@ -1125,6 +1078,34 @@
                 <input type="password" id="set-admin-password" value="ChangeMe123!" placeholder="Set Admin Password (Default: ChangeMe123!)" style="font-weight:700;" />
                 <small style="color:#9c4221;display:block;margin-top:4px;">This password is required when switching from Reception Staff to Administrator Profile.</small>
               </div>
+            </div>
+          </article>
+
+          <!-- Settings Tab 2: Bank Accounts & Payment Modes -->
+          <article class="panel tab-content" id="settings-banks-tab" style="padding:22px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+              <div>
+                <h2 style="font-size:16px;margin:0;color:#1e293b;">Company Bank Accounts &amp; Payment Modes Manager</h2>
+                <p style="font-size:12px;color:#64748b;margin:4px 0 0 0;">Add, edit, or remove your firm's Bank Accounts. These accounts populate all sales, purchase, stock, and ledger payment dropdowns.</p>
+              </div>
+              <button class="primary-btn" id="btn-add-bank-account-modal" style="font-size:12px;padding:8px 14px;background:#2b6cb0;">＋ Add Bank Account</button>
+            </div>
+
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Bank Name</th>
+                    <th>Account Type</th>
+                    <th>Account Number</th>
+                    <th>IFSC Code</th>
+                    <th>Branch City</th>
+                    <th>Invoice Primary</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="settings-banks-table"></tbody>
+              </table>
             </div>
           </article>
 

@@ -313,6 +313,11 @@ const state = {
       balanceAmount: 0,
       status: 'Paid & Dispatched'
     }
+  ],
+  bankAccounts: [
+    { id: 'BANK-01', bankName: 'HDFC Bank', accType: 'Current A/C', accNo: '50200012345678', ifsc: 'HDFC0001234', branch: 'Gorakhpur Main Branch', isPrimary: true },
+    { id: 'BANK-02', bankName: 'ICICI Bank', accType: 'Business Current A/C', accNo: '001105001234', ifsc: 'ICIC0000011', branch: 'Rustampur Gorakhpur', isPrimary: false },
+    { id: 'BANK-03', bankName: 'State Bank of India (SBI)', accType: 'Corporate A/C', accNo: '30981234567', ifsc: 'SBIN0000321', branch: 'Civil Lines Gorakhpur', isPrimary: false }
   ]
 };
 
@@ -1268,6 +1273,74 @@ function downloadSalesCSV() {
   downloadRowsCSV(rows, `Lithynova_Sales_Register_${new Date().toISOString().split('T')[0]}.csv`);
 }
 
+function getCompanyBankAccounts() {
+  const customBankAccs = (state.bankAccounts || []).map(b => `${b.bankName} — ${b.accType} (${b.accNo})`);
+  if (customBankAccs.length === 0) {
+    customBankAccs.push(
+      'HDFC Bank — Current A/C (50200012345678)',
+      'ICICI Bank — Business Current A/C (001105001234)',
+      'State Bank of India (SBI) — Corporate A/C (30981234567)'
+    );
+  }
+  customBankAccs.push('UPI / PhonePe / GPay', 'Cash in Hand', 'Cheque / Demand Draft');
+  return customBankAccs;
+}
+
+function getBankOptionsHtml(selectedVal = '') {
+  const accs = getCompanyBankAccounts();
+  return accs.map(acc => `<option value="${acc}" ${acc === selectedVal ? 'selected' : ''}>${acc}</option>`).join('');
+}
+
+function renderBankAccountsSettings() {
+  if ($('#bank-count-badge')) $('#bank-count-badge').textContent = (state.bankAccounts || []).length;
+
+  if ($('#settings-banks-table')) {
+    $('#settings-banks-table').innerHTML = (state.bankAccounts || []).map((b, idx) => `
+      <tr>
+        <td><strong>${b.bankName}</strong></td>
+        <td>${categoryBadge(b.accType)}</td>
+        <td><span style="font-family:monospace;font-weight:700;color:#2b6cb0;">${b.accNo}</span></td>
+        <td><span style="font-family:monospace;font-weight:700;">${b.ifsc || '—'}</span></td>
+        <td>${b.branch || '—'}</td>
+        <td>${b.isPrimary ? badge('PRIMARY ON INVOICES') : '<span style="color:#a0aec0">Secondary</span>'}</td>
+        <td>
+          <div style="display:flex;gap:6px;">
+            <button class="secondary-btn btn-edit-bank-account" data-idx="${idx}" style="padding:4px 8px;font-size:11px;">✎ Edit</button>
+            <button class="secondary-btn btn-remove-bank-account" data-idx="${idx}" style="padding:4px 8px;font-size:11px;background:#fff1f0;color:#c53030;">❌ Delete</button>
+          </div>
+        </td>
+      </tr>
+    `).join('') || '<tr><td colspan="7" style="text-align:center;color:#a0aec0;padding:14px;">No bank accounts added yet. Click "+ Add Bank Account" above.</td></tr>';
+  }
+}
+
+function openBankModal(editIdx = null) {
+  const backdrop = $('#modal-backdrop');
+  if (!backdrop) return;
+
+  const targetBank = editIdx !== null ? (state.bankAccounts || [])[editIdx] : null;
+
+  $('#modal-title').textContent = editIdx !== null ? 'Edit Company Bank Account' : 'Add New Company Bank Account';
+  $('#modal-fields').innerHTML = `
+    <div class="form-grid">
+      <input type="hidden" name="bankIdx" value="${editIdx !== null ? editIdx : ''}" />
+      <div class="field"><label style="font-weight:700;">Bank Name *</label><input name="bankName" value="${targetBank ? targetBank.bankName : ''}" placeholder="e.g. HDFC Bank" required /></div>
+      <div class="field"><label style="font-weight:700;">Account Type *</label><input name="accType" value="${targetBank ? targetBank.accType : 'Current A/C'}" placeholder="e.g. Current A/C" required /></div>
+      <div class="field"><label style="font-weight:700;">Account Number *</label><input name="accNo" value="${targetBank ? targetBank.accNo : ''}" placeholder="e.g. 50200012345678" style="font-weight:700;" required /></div>
+      <div class="field"><label style="font-weight:700;">IFSC Code *</label><input name="ifsc" value="${targetBank ? targetBank.ifsc : ''}" placeholder="e.g. HDFC0001234" style="font-weight:700;" required /></div>
+      <div class="field full"><label style="font-weight:700;">Branch City / Address</label><input name="branch" value="${targetBank ? targetBank.branch : ''}" placeholder="e.g. Gorakhpur Main Branch" /></div>
+      <div class="field full" style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+        <input type="checkbox" name="isPrimary" id="chk_bank_primary" ${targetBank && targetBank.isPrimary ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer;" />
+        <label for="chk_bank_primary" style="font-weight:700;cursor:pointer;color:#2b6cb0;">Set as Primary Bank Account (Print on HK Motors Tax Invoices)</label>
+      </div>
+    </div>
+  `;
+
+  backdrop.removeAttribute('hidden');
+  backdrop.style.display = 'grid';
+  backdrop.dataset.kind = 'company-bank';
+}
+
 function populateSettingsUI() {
   const settings = getSystemSettings();
   if ($('#set-company-name')) $('#set-company-name').value = settings.companyName || 'HK MOTORS';
@@ -1286,6 +1359,8 @@ function populateSettingsUI() {
   if ($('#set-hsn-battery')) $('#set-hsn-battery').value = settings.hsnBattery || '87116020';
   if ($('#set-hsn-charger')) $('#set-hsn-charger').value = settings.hsnCharger || '85044090';
   if ($('#set-admin-password')) $('#set-admin-password').value = settings.adminPassword || 'ChangeMe123!';
+
+  renderBankAccountsSettings();
 }
 
 function showView(view) {
@@ -1305,7 +1380,7 @@ function showView(view) {
   }
 
   if (view === 'settings') populateSettingsUI();
-  if (view === 'vehicles') renderVehicles();
+  if (view === 'inventory' || view === 'vehicles') renderVehicles();
   if (view === 'purchase-ledger') {
     renderSuppliers();
     renderSupplierStatement();
@@ -4053,6 +4128,41 @@ function submitModal(e) {
     syncToGoogleSheets(true);
   }
 
+  if (kind === 'company-bank') {
+    const bankIdxStr = data.bankIdx;
+    const isPrimary = formData.get('isPrimary') === 'on';
+
+    if (isPrimary && Array.isArray(state.bankAccounts)) {
+      state.bankAccounts.forEach(b => b.isPrimary = false);
+    }
+
+    const newBank = {
+      id: 'BANK-' + String((state.bankAccounts || []).length + 1).padStart(2, '0'),
+      bankName: data.bankName,
+      accType: data.accType,
+      accNo: data.accNo,
+      ifsc: data.ifsc,
+      branch: data.branch || '',
+      isPrimary
+    };
+
+    if (!state.bankAccounts) state.bankAccounts = [];
+
+    if (bankIdxStr !== '' && bankIdxStr !== null && bankIdxStr !== undefined) {
+      const idx = Number(bankIdxStr);
+      state.bankAccounts[idx] = newBank;
+      toast(`Updated Bank Account: ${newBank.bankName} (${newBank.accNo})`);
+    } else {
+      state.bankAccounts.push(newBank);
+      toast(`Added Bank Account: ${newBank.bankName} (${newBank.accNo})`);
+    }
+
+    saveState();
+    renderBankAccountsSettings();
+    closeModal();
+    return;
+  }
+
   closeModal();
 }
 
@@ -4484,6 +4594,30 @@ function renderVehicleModels() {
 }
 
 function renderVehicles() {
+  const availableVehicles = (state.vehicles || []).filter(v => v.status === 'Available in Showroom');
+  if ($('#finished-vehicle-count')) $('#finished-vehicle-count').textContent = availableVehicles.length;
+  if ($('#inv-vehicle-count')) $('#inv-vehicle-count').textContent = availableVehicles.length;
+
+  const vehicleRowsHtml = (state.vehicles || []).map((v, idx) => `
+    <tr>
+      <td><strong style="font-family:monospace;color:#2b6cb0;">${v.chassisNo}</strong></td>
+      <td><strong>${v.model}</strong></td>
+      <td>${v.motorNo || '1200W BLDC'}</td>
+      <td><span style="font-family:monospace;">${v.batterySerial || 'LFP 51.2V 100Ah'}</span></td>
+      <td>${v.color || 'Standard'}</td>
+      <td><strong style="color:#2f855a;">${formatINR(v.price)}</strong></td>
+      <td>${badge(v.status || 'Available in Showroom')}</td>
+      <td>
+        ${v.status === 'Available in Showroom' 
+          ? `<button class="primary-btn btn-sell-vehicle-direct" data-idx="${idx}" style="padding:4px 9px;font-size:11px;background:#2b6cb0;">↗ Sell Vehicle</button>`
+          : `<span style="font-size:11px;color:#2f855a;font-weight:700;">Sold &amp; Dispatched</span>`}
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="8" style="text-align:center;color:#a0aec0;padding:16px;">No vehicles in showroom stock yet. Click "+ Add Vehicle to Stock" above.</td></tr>';
+
+  if ($('#inventory-vehicles-table')) $('#inventory-vehicles-table').innerHTML = vehicleRowsHtml;
+  if ($('#vehicle-stock-table')) $('#vehicle-stock-table').innerHTML = vehicleRowsHtml;
+
   if ($('#vehicle-sales-table')) {
     $('#vehicle-sales-table').innerHTML = (state.vehicleInvoices || []).map(vinv => `
       <tr>
@@ -4498,25 +4632,6 @@ function renderVehicles() {
         <td>${badge('Sold & Dispatched')}</td>
       </tr>
     `).join('') || '<tr><td colspan="9" style="text-align:center;color:#a0aec0;padding:16px;">No EV vehicle sales recorded yet.</td></tr>';
-  }
-
-  if ($('#vehicle-stock-table')) {
-    $('#vehicle-stock-table').innerHTML = (state.vehicles || []).map((v, idx) => `
-      <tr>
-        <td><strong style="font-family:monospace;color:#2b6cb0;">${v.chassisNo}</strong></td>
-        <td><strong>${v.model}</strong></td>
-        <td>${v.motorNo || '1200W BLDC'}</td>
-        <td><span style="font-family:monospace;">${v.batterySerial || 'LFP 51.2V 100Ah'}</span></td>
-        <td>${v.color || 'Standard'}</td>
-        <td><strong style="color:#2f855a;">${formatINR(v.price)}</strong></td>
-        <td>${badge(v.status || 'Available in Showroom')}</td>
-        <td>
-          ${v.status === 'Available in Showroom' 
-            ? `<button class="primary-btn btn-sell-vehicle-direct" data-idx="${idx}" style="padding:4px 9px;font-size:11px;background:#2b6cb0;">↗ Sell Vehicle</button>`
-            : `<span style="font-size:11px;color:#2f855a;font-weight:700;">Sold</span>`}
-        </td>
-      </tr>
-    `).join('') || '<tr><td colspan="8" style="text-align:center;color:#a0aec0;padding:16px;">No vehicles in showroom stock yet.</td></tr>';
   }
 }
 
