@@ -3984,21 +3984,43 @@ function submitModal(e) {
       return;
     }
 
+    const bankAccount = data.credit_mode || 'HDFC Bank Current A/C (50200012345678)';
+    const todayStr = data.credit_date || new Date().toISOString().split('T')[0];
+    const isDealer = (state.dealers || []).some(d => normalizeText(d.name) === normalizeText(party));
+
     state.ledger.unshift({
       id: 'LEDG-P-' + Date.now().toString().slice(-4),
-      date: data.credit_date || new Date().toISOString().split('T')[0],
+      date: todayStr,
       party: party,
-      partyType: 'Credit',
+      partyType: isDealer ? 'Dealer' : 'Customer',
       ref: data.credit_ref || ('PAY-' + Date.now().toString().slice(-4)),
-      desc: `Payment Received via ${data.credit_mode || 'Cash/Bank'} (${data.credit_notes || 'Credit'})`,
+      desc: `Payment Received via ${bankAccount} (${data.credit_notes || 'Credit'})`,
       debit: 0.00,
       credit: amount,
-      balance: 0.00
+      balance: 0.00,
+      bankAccount
     });
 
+    saveState();
     render();
+
+    // Auto-sync selected party dropdowns across both Retail and Dealer ledgers
+    const ledgerSelect = $('#ledger-party-select');
+    if (ledgerSelect) {
+      if (![...ledgerSelect.options].some(o => o.value === party)) {
+        ledgerSelect.insertAdjacentHTML('beforeend', `<option value="${party}">${party}</option>`);
+      }
+      ledgerSelect.value = party;
+      renderLedger();
+    }
+
+    const dealerSelect = $('#dealer-statement-select');
+    if (dealerSelect && isDealer) {
+      dealerSelect.value = party;
+      renderDealerStatement();
+    }
+
     closeModal();
-    showView('sales');
     toast(`Recorded payment credit of ₹${amount.toLocaleString('en-IN')} for ${party}`);
   }
 
@@ -4507,39 +4529,45 @@ function printHkMotorsInvoice(invNo) {
 
 function openPaymentCreditModal(preferredParty = '') {
   const partySet = new Set();
-  state.invoices.forEach(inv => partySet.add(inv.party));
-  state.ledger.forEach(l => partySet.add(l.party));
-  const partyList = Array.from(partySet);
+  (state.dealers || []).forEach(d => partySet.add(d.name));
+  (state.invoices || []).forEach(inv => partySet.add(inv.party));
+  (state.ledger || []).forEach(l => partySet.add(l.party));
+  (state.warranties || []).forEach(w => partySet.add(w.customer));
+
+  const partyList = Array.from(partySet).filter(Boolean);
   if (preferredParty && !partyList.includes(preferredParty)) {
     partyList.unshift(preferredParty);
   }
 
+  const selectedParty = preferredParty || partyList[0] || '';
+
   const modalBackdrop = $('#modal-backdrop');
   if (!modalBackdrop) return;
 
-  $('#modal-title').textContent = 'Record Customer / Dealer Payment Credit';
+  $('#modal-title').textContent = selectedParty ? `Record Payment Credit — ${selectedParty}` : 'Record Customer / Dealer Payment Credit';
   const modalEl = $('.modal');
-  if (modalEl) modalEl.style.width = 'min(520px, 98%)';
+  if (modalEl) modalEl.style.width = 'min(540px, 98%)';
+
+  const bankOptions = getBankOptionsHtml();
 
   $('#modal-fields').innerHTML = `
     <div class="form-grid">
-      <div class="field full"><label style="font-weight:700;">Select Party (Customer / Dealer) *</label>
-        <select name="credit_party" style="padding:10px;font-weight:700;">
-          ${partyList.map(p => `<option value="${p}" ${p === preferredParty ? 'selected' : ''}>${p}</option>`).join('')}
+      <div class="field full" style="background:#ebf8ff;padding:12px;border-radius:8px;border:1px solid #bee3f8;margin-bottom:4px;">
+        <label style="font-weight:800;color:#2b6cb0;">Party Name (Customer / Registered Dealer) *</label>
+        <select name="credit_party" id="credit-party-dropdown" style="padding:9px;font-weight:800;font-size:14px;border:1px solid #2b6cb0;width:100%;border-radius:6px;background:#fff;">
+          ${partyList.map(p => `<option value="${p}" ${p === selectedParty ? 'selected' : ''}>${p}</option>`).join('')}
+        </select>
+        <small style="color:#2b6cb0;display:block;margin-top:4px;">💡 Auto-selected based on active ledger on screen (<strong>${selectedParty || 'Select Party'}</strong>).</small>
+      </div>
+      <div class="field"><label style="font-weight:700;">Payment Date *</label><input name="credit_date" type="date" value="${new Date().toISOString().split('T')[0]}" required /></div>
+      <div class="field"><label style="font-weight:700;">Reference / Cheque / Txn ID *</label><input name="credit_ref" value="PAY-2026-${Date.now().toString().slice(-4)}" style="font-weight:700;" required /></div>
+      <div class="field full"><label style="font-weight:700;">Receiving Bank Account / Payment Mode *</label>
+        <select name="credit_mode" style="font-weight:700;padding:8px;width:100%;">
+          ${bankOptions}
         </select>
       </div>
-      <div class="field"><label>Payment Date</label><input name="credit_date" type="date" value="${new Date().toISOString().split('T')[0]}" required /></div>
-      <div class="field"><label>Payment Reference / Txn ID</label><input name="credit_ref" value="PAY-2026-${Date.now().toString().slice(-4)}" required /></div>
-      <div class="field"><label>Payment Mode</label>
-        <select name="credit_mode">
-          <option>Cash</option>
-          <option>UPI / PhonePe / GPay</option>
-          <option>NEFT / Bank Transfer</option>
-          <option>Cheque</option>
-        </select>
-      </div>
-      <div class="field"><label style="font-weight:700;color:#16a34a;">Amount Received (₹) *</label><input name="credit_amount" type="number" step="0.01" value="10000" required style="font-weight:700;" /></div>
-      <div class="field full"><label>Notes / Remarks</label><input name="credit_notes" value="Payment credit received" /></div>
+      <div class="field full"><label style="font-weight:800;color:#16a34a;">Amount Received (₹) *</label><input name="credit_amount" type="number" step="0.01" value="10000" required style="font-weight:800;font-size:16px;color:#16a34a;" /></div>
+      <div class="field full"><label style="font-weight:700;">Transaction Notes / Remarks</label><input name="credit_notes" value="Payment credit received" /></div>
     </div>
   `;
 
@@ -5074,6 +5102,13 @@ function bind() {
       return;
     }
 
+    const addDlrCreditBtn = e.target.closest('.btn-add-dealer-credit-direct');
+    if (addDlrCreditBtn) {
+      e.preventDefault();
+      openPaymentCreditModal(addDlrCreditBtn.dataset.dealer || '');
+      return;
+    }
+
     // 5. Register New Dealer Modal
     if (e.target.id === 'btn-open-new-dealer-modal') {
       e.preventDefault();
@@ -5102,9 +5137,17 @@ function bind() {
       return;
     }
 
-    if (e.target.id === 'btn-open-payment-modal' || e.target.id === 'btn-add-ledger-credit') {
+    if (e.target.id === 'btn-add-ledger-credit') {
       e.preventDefault();
-      openPaymentCreditModal();
+      const activeParty = $('#ledger-party-select')?.value || '';
+      openPaymentCreditModal(activeParty);
+      return;
+    }
+
+    if (e.target.id === 'btn-open-payment-modal') {
+      e.preventDefault();
+      const activeParty = $('#ledger-party-select')?.value || $('#dealer-statement-select')?.value || '';
+      openPaymentCreditModal(activeParty);
       return;
     }
 
