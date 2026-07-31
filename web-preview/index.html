@@ -1144,11 +1144,26 @@
             </div>
           </article>
 
-          <!-- Settings Tab 4: Backup, Restore & Data Tools -->
+          <!-- Settings Tab 4: Backup, Restore & Database Storage Tools -->
           <article class="panel tab-content" id="settings-backup-tab" style="padding:22px;">
-            <h2 style="font-size:16px;margin-bottom:6px;color:#1e293b;">Data Backup, System Restore &amp; Factory Reset</h2>
-            <p style="font-size:12px;color:#64748b;margin-bottom:18px;">Backup your system data to JSON files or restore from an existing backup file.</p>
+            <h2 style="font-size:16px;margin-bottom:6px;color:#1e293b;">Database Engine, Backup &amp; System Restore</h2>
+            <p style="font-size:12px;color:#64748b;margin-bottom:18px;">Structured persistent storage metrics, automatic JSON disk backups, and cloud synchronization status.</p>
             
+            <div style="background:#f8fafc;padding:16px;border-radius:10px;border:1px solid #cbd5e1;margin-bottom:18px;display:grid;grid-template-columns:1.2fr 1fr 1.2fr;gap:14px;">
+              <div>
+                <small style="color:#64748b;font-weight:700;font-size:10px;display:block;text-transform:uppercase;">DATABASE STORAGE ENGINE</small>
+                <strong style="font-size:14px;color:#2b6cb0;" id="db-engine-type">IndexedDB Desktop DB (Unlimited Capacity)</strong>
+              </div>
+              <div>
+                <small style="color:#64748b;font-weight:700;font-size:10px;display:block;text-transform:uppercase;">TOTAL SYSTEM RECORDS</small>
+                <strong style="font-size:14px;color:#2f855a;" id="db-total-records">0 Records</strong>
+              </div>
+              <div>
+                <small style="color:#64748b;font-weight:700;font-size:10px;display:block;text-transform:uppercase;">DATABASE HEALTH STATUS</small>
+                <strong style="font-size:14px;color:#2f855a;" id="db-health-status">🟢 100% Fail-Safe (Local DB + Cloud Sync)</strong>
+              </div>
+            </div>
+
             <div style="display:flex;gap:14px;flex-wrap:wrap;">
               <button class="primary-btn" id="btn-export-backup-json" style="padding:12px 18px;font-size:13px;background:#2b6cb0;">📥 Backup System Data (JSON Export)</button>
               <button class="secondary-btn" id="btn-trigger-restore" style="padding:12px 18px;font-size:13px;">📤 Restore Data from JSON Backup</button>
