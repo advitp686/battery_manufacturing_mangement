@@ -31,10 +31,12 @@
       <div class="workspace-label">WORKSPACE</div>
       <nav class="nav-list">
         <button class="nav-item active" data-view="dashboard"><span class="nav-icon">▦</span> Dashboard</button>
-        <button class="nav-item" data-view="models"><span class="nav-icon">◈</span> Battery models</button>
-        <button class="nav-item" data-view="inventory"><span class="nav-icon">▤</span> Inventory</button>
+        <button class="nav-item" data-view="models"><span class="nav-icon">◈</span> Battery &amp; Vehicle Models</button>
+        <button class="nav-item" data-view="inventory"><span class="nav-icon">▤</span> Raw Stock &amp; Inventory</button>
         <button class="nav-item" data-view="production"><span class="nav-icon">⚙</span> Production &amp; QC</button>
-        <button class="nav-item" data-view="sales"><span class="nav-icon">↗</span> Sales</button>
+        <button class="nav-item" data-view="sales"><span class="nav-icon">↗</span> Battery Sales &amp; Invoices</button>
+        <button class="nav-item" data-view="vehicles"><span class="nav-icon">🛺</span> EV Vehicle Sales</button>
+        <button class="nav-item" data-view="purchase-ledger"><span class="nav-icon">🧾</span> Supplier Purchase Ledger</button>
         <button class="nav-item" data-view="warranty"><span class="nav-icon">🛡️</span> Warranty &amp; Claims</button>
         <button class="nav-item" data-view="reports"><span class="nav-icon">▥</span> Reports</button>
         <button class="nav-item" data-view="lookup"><span class="nav-icon">⌕</span> QR lookup</button>
@@ -211,7 +213,8 @@
           </div>
 
           <div class="tab-row" style="margin-bottom:16px;">
-            <button class="tab active" data-tab="models-list-tab">Battery Models</button>
+            <button class="tab active" data-tab="models-list-tab">🔋 Battery Models &amp; BOM</button>
+            <button class="tab" data-tab="vehicle-models-tab">🛺 EV Vehicle Models Catalog (<span id="vehicle-model-count-badge">0</span>)</button>
             <button class="tab" data-tab="components-list-tab">Master Components Catalog (<span id="comp-count-badge">0</span>)</button>
           </div>
 
@@ -239,6 +242,34 @@
                   </tr>
                 </thead>
                 <tbody id="models-table"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <!-- Vehicle Models Tab -->
+          <article class="panel table-panel tab-content" id="vehicle-models-tab">
+            <div class="panel-heading">
+              <div>
+                <h2>EV Vehicle Models Catalog</h2>
+                <p>E-Rickshaws, 3W Cargo Loaders, motors, HSN codes, and retail ex-showroom prices</p>
+              </div>
+              <button class="primary-btn" id="btn-add-vehicle-model-trigger" style="font-size:12px;padding:6px 12px;">＋ Add EV Vehicle Model</button>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Vehicle Model Name</th>
+                    <th>Category / Type</th>
+                    <th>Motor Specs</th>
+                    <th>Recommended Battery</th>
+                    <th>HSN Code</th>
+                    <th>GST (%)</th>
+                    <th>Ex-Showroom Price</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="vehicle-models-table"></tbody>
               </table>
             </div>
           </article>
@@ -487,6 +518,7 @@
                         <th style="text-align:right;">Debit (₹)</th>
                         <th style="text-align:right;">Credit (₹)</th>
                         <th style="text-align:right;">Balance (₹)</th>
+                        <th>Bank Account / Mode</th>
                       </tr>
                     </thead>
                     <tbody id="ledger-statement-table"></tbody>
@@ -580,6 +612,7 @@
                         <th style="text-align:right;">Debit (₹)</th>
                         <th style="text-align:right;">Credit (₹)</th>
                         <th style="text-align:right;">Balance (₹)</th>
+                        <th>Bank Account / Mode</th>
                       </tr>
                     </thead>
                     <tbody id="dealer-statement-table"></tbody>
@@ -590,6 +623,202 @@
           </div>
         </section>
 
+
+        <!-- Section: EV Vehicle Sales & Showroom Dispatches -->
+        <section class="view" id="view-vehicles">
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">Vehicle Commercials &amp; Showroom Stock</p>
+              <h1>🛺 EV Vehicle Sales &amp; Dispatches</h1>
+              <p class="subheading">Manage EV E-Rickshaws, Cargo Loaders, Showroom Stock, Vehicle Tax Invoices, and Vehicle Warranties.</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="primary-btn" id="btn-open-vehicle-sale-modal" style="background:#2b6cb0;">＋ Record EV Vehicle Sale</button>
+              <button class="secondary-btn" id="btn-open-vehicle-stock-modal" style="background:#edf2f7;color:#2d3748;font-weight:700;">＋ Add Vehicle to Stock</button>
+            </div>
+          </div>
+
+          <div class="tab-row" style="margin-bottom:16px;">
+            <button class="tab active" data-tab="vehicle-sales-tab">🛺 EV Vehicle Sales &amp; Tax Invoices</button>
+            <button class="tab" data-tab="vehicle-stock-tab">🏢 Showroom Vehicle Inventory Stock</button>
+          </div>
+
+          <!-- Vehicle Tab 1: Sales & Tax Invoices -->
+          <div class="tab-content active" id="vehicle-sales-tab">
+            <article class="panel table-panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>EV Vehicle Sales &amp; Dispatches Register</h2>
+                  <p>Invoices issued for E-Rickshaws, 3W Loaders, Chassis/VIN numbers, and receiving Bank Accounts</p>
+                </div>
+                <button class="secondary-btn" id="btn-export-vehicle-sales-csv">Export Vehicles CSV</button>
+              </div>
+              <div class="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Invoice No</th>
+                      <th>Customer / Dealer</th>
+                      <th>Vehicle Model</th>
+                      <th>Chassis / VIN No</th>
+                      <th>Motor No</th>
+                      <th>Grand Total</th>
+                      <th>Bank Account / Mode</th>
+                      <th>Dispatch Date</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="vehicle-sales-table"></tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+
+          <!-- Vehicle Tab 2: Showroom Stock -->
+          <div class="tab-content" id="vehicle-stock-tab">
+            <article class="panel table-panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>Showroom EV Vehicle Inventory Stock</h2>
+                  <p>Available E-Rickshaws and Cargo Loaders ready for retail sale or dealer dispatch</p>
+                </div>
+                <button class="primary-btn" id="btn-add-vehicle-stock-trigger" style="font-size:12px;padding:6px 12px;">＋ Add Vehicle to Showroom</button>
+              </div>
+              <div class="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Chassis / VIN No</th>
+                      <th>Vehicle Model Name</th>
+                      <th>Motor No / Specs</th>
+                      <th>Battery Pack Installed</th>
+                      <th>Color</th>
+                      <th>Ex-Showroom Price</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="vehicle-stock-table"></tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <!-- Section: Supplier Accounts Master & Purchase Ledger -->
+        <section class="view" id="view-purchase-ledger">
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">Procurement &amp; Supplier Accounting</p>
+              <h1>🧾 Supplier Purchase Ledger &amp; Accounts</h1>
+              <p class="subheading">Track raw material purchases, cell supplier bills, payments made via bank accounts, and outstanding payables.</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="primary-btn" data-modal="supplier-modal" style="background:#2b6cb0;">＋ Register New Supplier</button>
+              <button class="secondary-btn" id="btn-open-supplier-pay-modal" style="background:#edf2f7;color:#2d3748;font-weight:700;">＋ Record Supplier Payment</button>
+            </div>
+          </div>
+
+          <div class="tab-row" style="margin-bottom:16px;">
+            <button class="tab active" data-tab="supplier-ledger-statement-tab">🧾 Supplier Statement of Account</button>
+            <button class="tab" data-tab="supplier-master-tab">🏢 Supplier Accounts Master (<span id="supp-count-badge">0</span>)</button>
+          </div>
+
+          <!-- Supplier Tab 1: Statement of Account -->
+          <div class="tab-content active" id="supplier-ledger-statement-tab">
+            <div style="display:grid;grid-template-columns: 320px 1fr;gap:18px;align-items:start;">
+              <!-- Left Panel: Supplier Selector & KPI Summary -->
+              <article class="panel" style="margin-bottom:0;padding:18px;">
+                <h2 style="font-size:15px;margin-bottom:12px;">Supplier Purchase Ledger</h2>
+                <div class="field" style="margin-bottom:14px;">
+                  <label style="font-weight:700;display:block;margin-bottom:6px;">Select Component / Cell Supplier *</label>
+                  <select id="supplier-statement-select" style="width:100%;padding:8px;font-weight:700;border:1px solid #2b6cb0;background:#ebf8ff;color:#2b6cb0;border-radius:6px;font-size:12px;">
+                    <!-- Dynamically populated -->
+                  </select>
+                </div>
+
+                <div id="supplier-summary-card" style="background:#f8fafc;padding:14px;border-radius:8px;border:1px solid #e2e8f0;">
+                  <div style="font-size:11px;color:#64748b;font-weight:700;">SUPPLIER DETAILS</div>
+                  <strong style="font-size:15px;color:#1e293b;display:block;margin-top:2px;" id="supp-summary-name">Select Supplier</strong>
+                  <small style="color:#4a5568;display:block;margin-top:2px;" id="supp-summary-contact">—</small>
+
+                  <div style="border-top:1px solid #e2e8f0;margin-top:12px;padding-top:10px;">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px;">
+                      <span>Total Purchases (Credit):</span>
+                      <strong id="supp-total-purchases">₹ 0.00</strong>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px;">
+                      <span>Total Payments Made:</span>
+                      <span id="supp-total-payments" style="color:#2f855a;font-weight:700;">₹ 0.00</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;border-top:1px solid #cbd5e1;padding-top:6px;margin-top:6px;font-size:14px;font-weight:900;">
+                      <span>Net Payable Balance:</span>
+                      <span id="supp-net-balance" style="color:#c53030;">₹ 0.00</span>
+                    </div>
+                  </div>
+                  <button class="primary-btn" id="btn-record-supp-payment-direct" style="width:100%;margin-top:14px;font-size:12px;padding:8px;background:#319795;">💳 Pay Supplier via Bank A/C</button>
+                </div>
+              </article>
+
+              <!-- Right Panel: Supplier Statement Table -->
+              <article class="panel table-panel" style="margin-bottom:0;">
+                <div class="panel-heading">
+                  <div>
+                    <h2 style="font-size:15px;" id="supp-ledger-table-title">Supplier Statement of Account</h2>
+                    <p style="font-size:11px;">Complete purchase bill and bank payment history</p>
+                  </div>
+                  <button class="secondary-btn" id="btn-export-supp-ledger-csv">Export Supplier Ledger CSV</button>
+                </div>
+                <div class="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Ref / Bill No</th>
+                        <th>Transaction Description</th>
+                        <th>Debit (₹ Paid)</th>
+                        <th>Credit (₹ Bill)</th>
+                        <th>Running Balance</th>
+                        <th>Bank Account / Mode</th>
+                      </tr>
+                    </thead>
+                    <tbody id="supplier-statement-table"></tbody>
+                  </table>
+                </div>
+              </article>
+            </div>
+          </div>
+
+          <!-- Supplier Tab 2: Supplier Master -->
+          <div class="tab-content" id="supplier-master-tab">
+            <article class="panel table-panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>Registered Raw Material &amp; Component Suppliers</h2>
+                  <p>Master registry of cell manufacturers, BMS vendors, charger suppliers, and component distributors</p>
+                </div>
+                <button class="primary-btn" data-modal="supplier-modal" style="font-size:12px;padding:6px 12px;">＋ Register New Supplier</button>
+              </div>
+              <div class="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Supplier ID</th>
+                      <th>Supplier Firm Name</th>
+                      <th>Contact Person</th>
+                      <th>GSTIN / Tax ID</th>
+                      <th>State / City</th>
+                      <th>Category</th>
+                      <th>Net Payable</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="supplier-master-table"></tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+        </section>
 
         <section class="view" id="view-warranty">
           <div class="page-heading">

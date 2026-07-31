@@ -270,6 +270,49 @@ const state = {
     { claim: 'CLM-2026-0009', pack: 'BAT-2026-000031', customer: 'Bharat S Gadhvi', issue: 'Capacity below 80%', opened: '22 Jul 2026', outcome: '—', status: 'Inspection' },
     { claim: 'CLM-2026-0008', pack: 'BAT-2026-000027', customer: 'Apex EV', issue: 'BMS communication', opened: '21 Jul 2026', outcome: 'Replacement', status: 'Open' },
     { claim: 'CLM-2026-0007', pack: 'BAT-2026-000020', customer: 'Sonalika Motors', issue: 'Connector damage', opened: '16 Jul 2026', outcome: 'Repair', status: 'Resolved' }
+  ],
+  suppliers: [
+    { id: 'SUPP-001', name: 'EVE Energy Co., Ltd.', contactPerson: 'Chen Wei', phone: '+86 752 2605888', gstin: '09AAACE1234F1Z1', address: 'Huizhou, Guangdong', state: 'IMPORT/OVERSEAS', category: 'Cell Manufacturer' },
+    { id: 'SUPP-002', name: 'Daly Electronics Co.', contactPerson: 'Li Na', phone: '+86 755 89221188', gstin: '09AAACD5678G1Z2', address: 'Shenzhen, China', state: 'IMPORT/OVERSEAS', category: 'BMS Supplier' },
+    { id: 'SUPP-003', name: 'MINDRA POWER SOLUTIONS', contactPerson: 'Rajesh Sharma', phone: '9876501234', gstin: '09AAACM9988H1Z4', address: 'Noida Sector 63, UP', state: 'UTTAR PRADESH', category: 'Chargers & Enclosures' }
+  ],
+  supplierLedger: [
+    { id: 'SLEDG-001', date: '2026-07-01', supplier: 'EVE Energy Co., Ltd.', ref: 'BILL-EVE-901', desc: 'Cell Batch CATL-LFP-280-08 Purchase', debit: 0, credit: 156000.00, balance: 156000.00, bankAccount: 'HDFC Bank Current A/C (50200012345678)' },
+    { id: 'SLEDG-002', date: '2026-07-05', supplier: 'EVE Energy Co., Ltd.', ref: 'PAY-EVE-01', desc: 'Telegraphic Transfer Payment via HDFC Bank', debit: 100000.00, credit: 0, balance: 56000.00, bankAccount: 'HDFC Bank Current A/C (50200012345678)' },
+    { id: 'SLEDG-003', date: '2026-07-10', supplier: 'Daly Electronics Co.', ref: 'BILL-DALY-440', desc: 'BMS Smart Boards Batch Purchase', debit: 0, credit: 68000.00, balance: 68000.00, bankAccount: 'ICICI Bank Business A/C (001105001234)' }
+  ],
+  vehicleModels: [
+    { id: 'VM-001', name: 'Deltic Star E-Rickshaw (L5)', type: 'Passenger 3W E-Rickshaw', motor: '1200W BLDC Heavy Duty', batterySpec: 'LFP 51.2V 100Ah', hsn: '87116010', gstRate: 5, price: 145000 },
+    { id: 'VM-002', name: 'Deltic Dromon Cargo Loader', type: 'Commercial 3W Cargo Loader', motor: '1500W High Torque', batterySpec: 'LFP 51.2V 150Ah', hsn: '87038000', gstRate: 5, price: 175000 }
+  ],
+  vehicles: [
+    { chassisNo: 'CHASSIS-DELTIC-2026-0089', model: 'Deltic Star E-Rickshaw (L5)', motorNo: 'MTR-1200W-8891', batterySerial: 'BAT-2026-000048', color: 'Glossy Royal Blue', price: 145000, status: 'Available in Showroom' },
+    { chassisNo: 'CHASSIS-DROMON-2026-0104', model: 'Deltic Dromon Cargo Loader', motorNo: 'MTR-1500W-9012', batterySerial: 'BAT-2026-000047', color: 'Signal Yellow', price: 175000, status: 'Available in Showroom' }
+  ],
+  vehicleInvoices: [
+    {
+      invoice: 'VINV-2026-0001',
+      party: 'RANJEET KUMAR',
+      fatherName: 'S/o Shri Baijnath Prasad',
+      phone: '9876543210',
+      address: 'Gaighat, Gorakhpur',
+      partyState: 'UTTAR PRADESH',
+      type: 'Retail',
+      date: '2026-07-20',
+      model: 'Deltic Star E-Rickshaw (L5)',
+      chassisNo: 'CHASSIS-DELTIC-2026-0050',
+      motorNo: 'MTR-1200W-7741',
+      batterySerial: 'BAT-2026-000030',
+      color: 'Emerald Green',
+      hsn: '87116010',
+      taxableValue: 138095.24,
+      totalGst: 6904.76,
+      grandTotal: 145000.00,
+      bankAccount: 'HDFC Bank Current A/C (50200012345678)',
+      paidAmount: 145000.00,
+      balanceAmount: 0,
+      status: 'Paid & Dispatched'
+    }
   ]
 };
 
@@ -913,6 +956,7 @@ function render() {
       $('#sales-table').innerHTML = filteredInvoices.length > 0 ? filteredInvoices.map(inv => {
         const itemsSummary = (inv.items || []).map(i => `${i.desc}${i.packSerial ? ` (${i.packSerial})` : ''}`).join(', ');
         const warrantyBadgeText = inv.warrantyStatus || (inv.type === 'Retail' ? 'Active (Same Day Auto)' : 'Dealer Auto (+1 Month)');
+        const bankAcc = inv.bankAccount || (inv.paidAmount > 0 ? 'HDFC Bank Current A/C (50200012345678)' : 'On Credit Ledger');
         return `
           <tr>
             <td><strong>${inv.invoice}</strong></td>
@@ -921,6 +965,7 @@ function render() {
             <td><span style="font-size:12px;font-weight:600;">${itemsSummary}</span></td>
             <td>₹ ${inv.taxableValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
             <td><strong style="color:#1e293b;">₹ ${inv.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></td>
+            <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${bankAcc}</span></td>
             <td>${inv.date}</td>
             <td>${badge(warrantyBadgeText)}</td>
             <td>
@@ -928,12 +973,16 @@ function render() {
             </td>
           </tr>
         `;
-      }).join('') : '<tr><td colspan="9" style="text-align:center;color:#a0aec0;padding:16px;">No invoices match the selected filter criteria.</td></tr>';
+      }).join('') : '<tr><td colspan="10" style="text-align:center;color:#a0aec0;padding:16px;">No invoices match the selected filter criteria.</td></tr>';
     }
 
-    // Render Party Ledger & Dealer Accounts
+    // Render Party Ledger, Dealer Accounts, Vehicles, & Suppliers
     renderLedger();
     renderDealersMaster();
+    renderVehicleModels();
+    renderVehicles();
+    renderSuppliers();
+    renderSupplierStatement();
 
     // Registered Warranties
     const wStatusFilter = $('#warranty-status-filter')?.value || 'all';
@@ -1255,8 +1304,11 @@ function showView(view) {
     $('#page-title').textContent = titleText || view;
   }
 
-  if (view === 'settings') {
-    populateSettingsUI();
+  if (view === 'settings') populateSettingsUI();
+  if (view === 'vehicles') renderVehicles();
+  if (view === 'purchase-ledger') {
+    renderSuppliers();
+    renderSupplierStatement();
   }
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -3195,19 +3247,217 @@ function submitModal(e) {
 
   if (kind === 'stock') {
     const todayStr = new Date().toISOString().split('T')[0];
+    const qty = Number(data.quantity || 1);
+    const unitPrice = Number(data.unit_cost || 0);
+    const totalPurchaseAmt = qty * unitPrice;
+    const suppName = data.supplier || 'General Vendor';
+    const bankAccount = data.bankAccount || 'HDFC Bank Current A/C (50200012345678)';
+
     state.inventory.unshift({
       batch: data.batch,
       material: data.material,
       category: data.category || 'Component',
-      supplier: data.supplier,
+      supplier: suppName,
       received: todayStr,
-      available: `${data.quantity} / ${data.quantity}`,
+      available: `${qty} / ${qty}`,
       location: data.location,
-      health: 'Good'
+      health: 'Good',
+      unitPrice
     });
+
+    if (totalPurchaseAmt > 0) {
+      if (!state.supplierLedger) state.supplierLedger = [];
+      let totalCredit = 0;
+      let totalDebit = 0;
+      state.supplierLedger.filter(l => normalizeText(l.supplier) === normalizeText(suppName)).forEach(l => {
+        totalCredit += (l.credit || 0);
+        totalDebit += (l.debit || 0);
+      });
+      const currentBal = totalCredit - totalDebit;
+      const newBal = currentBal + totalPurchaseAmt;
+
+      state.supplierLedger.unshift({
+        id: 'SLEDG-' + Date.now().toString().slice(-4),
+        date: todayStr,
+        supplier: suppName,
+        ref: data.batch || ('BILL-' + Date.now().toString().slice(-4)),
+        desc: `Stock Receipt Purchase: ${data.material} (Qty: ${qty})`,
+        debit: 0,
+        credit: totalPurchaseAmt,
+        balance: newBal,
+        bankAccount
+      });
+    }
+
+    saveState();
     render();
     showView('inventory');
-    toast(`Stock receipt ${data.batch} logged for ${data.material}`);
+    toast(`Stock receipt ${data.batch} logged (${formatINR(totalPurchaseAmt)} posted to ${suppName} Purchase Ledger)`);
+  }
+
+  if (kind === 'supplier') {
+    const newSupp = {
+      id: `SUPP-00${(state.suppliers || []).length + 1}`,
+      name: data.name,
+      contactPerson: data.contactPerson || '',
+      phone: data.phone || '',
+      gstin: data.gstin || '',
+      address: data.address || '',
+      state: data.state || 'UTTAR PRADESH',
+      category: data.category || 'General Component Supplier'
+    };
+    if (!state.suppliers) state.suppliers = [];
+    state.suppliers.unshift(newSupp);
+    saveState();
+    render();
+    showView('purchase-ledger');
+    toast(`Registered new Supplier Master Account: ${newSupp.name}`);
+  }
+
+  if (kind === 'supplier-pay') {
+    const suppName = data.supplier;
+    const amount = Number(data.amount || 0);
+    const bankAcc = data.bankAccount || 'HDFC Bank Current A/C (50200012345678)';
+    const dateStr = data.date || new Date().toISOString().split('T')[0];
+
+    if (!state.supplierLedger) state.supplierLedger = [];
+
+    let totalCredit = 0;
+    let totalDebit = 0;
+    state.supplierLedger.filter(l => normalizeText(l.supplier) === normalizeText(suppName)).forEach(l => {
+      totalCredit += (l.credit || 0);
+      totalDebit += (l.debit || 0);
+    });
+    const currentBal = totalCredit - totalDebit;
+    const newBal = currentBal - amount;
+
+    state.supplierLedger.unshift({
+      id: 'SLEDG-PAY-' + Date.now().toString().slice(-4),
+      date: dateStr,
+      supplier: suppName,
+      ref: data.ref || ('PAY-SUPP-' + Date.now().toString().slice(-4)),
+      desc: data.notes || `Bank Payment to ${suppName} via ${bankAcc}`,
+      debit: amount,
+      credit: 0,
+      balance: newBal,
+      bankAccount: bankAcc
+    });
+
+    saveState();
+    render();
+    showView('purchase-ledger');
+    toast(`💳 Recorded ${formatINR(amount)} Supplier Payment to ${suppName} via ${bankAcc}`);
+  }
+
+  if (kind === 'vehicle-model') {
+    const newVm = {
+      id: `VM-00${(state.vehicleModels || []).length + 1}`,
+      name: data.name,
+      type: data.type || 'Passenger 3W E-Rickshaw',
+      motor: data.motor || '1200W BLDC Heavy Duty',
+      batterySpec: data.batterySpec || 'LFP 51.2V 100Ah',
+      hsn: data.hsn || '87116010',
+      gstRate: Number(data.gstRate || 5),
+      price: Number(data.price || 145000)
+    };
+    if (!state.vehicleModels) state.vehicleModels = [];
+    state.vehicleModels.unshift(newVm);
+    saveState();
+    render();
+    showView('models');
+    toast(`🛺 Added EV Vehicle Model: ${newVm.name} (${formatINR(newVm.price)})`);
+  }
+
+  if (kind === 'vehicle-stock') {
+    const newVeh = {
+      chassisNo: data.chassisNo,
+      model: data.model,
+      motorNo: data.motorNo || 'MTR-BLDC-001',
+      batterySerial: data.batterySerial || 'LFP 51.2V 100Ah',
+      color: data.color || 'Royal Blue',
+      price: Number(data.price || 145000),
+      status: 'Available in Showroom'
+    };
+    if (!state.vehicles) state.vehicles = [];
+    state.vehicles.unshift(newVeh);
+    saveState();
+    render();
+    showView('vehicles');
+    toast(`🛺 Added Vehicle ${newVeh.chassisNo} to Showroom Inventory`);
+  }
+
+  if (kind === 'vehicle-sale') {
+    const invNo = 'VINV-2026-' + String((state.vehicleInvoices || []).length + 1).padStart(4, '0');
+    const party = data.party || 'EV Retail Buyer';
+    const totalAmt = Number(data.grandTotal || 145000);
+    const paidAmt = Number(data.paidAmount || totalAmt);
+    const bankAcc = data.bankAccount || 'HDFC Bank Current A/C (50200012345678)';
+    const chassisNo = data.chassisNo;
+
+    const vehInvoice = {
+      invoice: invNo,
+      party,
+      fatherName: data.fatherName || '',
+      phone: data.phone || '',
+      address: data.address || '',
+      partyState: data.partyState || 'UTTAR PRADESH',
+      type: (state.dealers || []).some(d => normalizeText(d.name) === normalizeText(party)) ? 'Dealer' : 'Retail',
+      date: new Date().toISOString().split('T')[0],
+      model: data.model,
+      chassisNo,
+      motorNo: data.motorNo || '',
+      batterySerial: data.batterySerial || '',
+      color: data.color || '',
+      hsn: data.hsn || '87116010',
+      taxableValue: Math.round(totalAmt / 1.05),
+      totalGst: Math.round(totalAmt - (totalAmt / 1.05)),
+      grandTotal: totalAmt,
+      bankAccount: bankAcc,
+      paidAmount: paidAmt,
+      balanceAmount: totalAmt - paidAmt,
+      status: 'Paid & Dispatched'
+    };
+
+    if (!state.vehicleInvoices) state.vehicleInvoices = [];
+    state.vehicleInvoices.unshift(vehInvoice);
+
+    const vehObj = (state.vehicles || []).find(v => v.chassisNo === chassisNo);
+    if (vehObj) {
+      vehObj.status = 'Sold & Dispatched';
+    }
+
+    state.ledger.push({
+      id: 'LEDG-VEH-' + Date.now().toString().slice(-4),
+      date: new Date().toISOString().split('T')[0],
+      party,
+      partyType: vehInvoice.type,
+      ref: invNo,
+      desc: `EV Vehicle Tax Invoice ${invNo} (${vehInvoice.model} · Chassis ${chassisNo})`,
+      debit: totalAmt,
+      credit: 0,
+      balance: totalAmt,
+      bankAccount: bankAcc
+    });
+
+    if (paidAmt > 0) {
+      state.ledger.push({
+        id: 'LEDG-VEH-PAY-' + Date.now().toString().slice(-4),
+        date: new Date().toISOString().split('T')[0],
+        party,
+        partyType: vehInvoice.type,
+        ref: 'PAY-' + invNo,
+        desc: `Vehicle Payment Received via ${bankAcc}`,
+        debit: 0,
+        credit: paidAmt,
+        balance: totalAmt - paidAmt,
+        bankAccount: bankAcc
+      });
+    }
+
+    saveState();
+    render();
+    showView('vehicles');
+    toast(`🛺 EV Vehicle Invoice ${invNo} Issued for ${party} (${chassisNo})`);
   }
 
   if (kind === 'dealer') {
@@ -4039,6 +4289,147 @@ function renderDealersMaster() {
   renderDealerStatement();
 }
 
+function renderSuppliers() {
+  if ($('#supp-count-badge')) $('#supp-count-badge').textContent = (state.suppliers || []).length;
+
+  if ($('#supplier-master-table')) {
+    $('#supplier-master-table').innerHTML = (state.suppliers || []).map((s, idx) => {
+      let totalCredit = 0;
+      let totalDebit = 0;
+      (state.supplierLedger || []).filter(l => normalizeText(l.supplier) === normalizeText(s.name)).forEach(l => {
+        totalCredit += (l.credit || 0);
+        totalDebit += (l.debit || 0);
+      });
+      const netPayable = totalCredit - totalDebit;
+
+      return `
+        <tr>
+          <td><strong>${s.id}</strong></td>
+          <td><strong>${s.name}</strong></td>
+          <td>${s.contactPerson || '—'}</td>
+          <td><span style="font-family:monospace;font-weight:700;">${s.gstin || '—'}</span></td>
+          <td>${s.state || s.address || '—'}</td>
+          <td>${badge(s.category || 'Supplier')}</td>
+          <td><strong style="color:${netPayable > 0 ? '#dc2626' : '#16a34a'};">${formatINR(netPayable)}</strong></td>
+          <td>
+            <button class="secondary-btn btn-view-supp-statement" data-supp="${s.name}" style="padding:4px 8px;font-size:11px;">View statement</button>
+          </td>
+        </tr>
+      `;
+    }).join('') || '<tr><td colspan="8" style="text-align:center;color:#a0aec0;padding:14px;">No suppliers registered yet.</td></tr>';
+  }
+
+  const select = $('#supplier-statement-select');
+  if (select) {
+    const currentVal = select.value;
+    const suppList = (state.suppliers || []).map(s => s.name);
+    if (suppList.length === 0) suppList.push('EVE Energy Co., Ltd.', 'Daly Electronics Co.');
+    const selectedSupp = currentVal || suppList[0];
+    select.innerHTML = suppList.map(name => `<option value="${name}" ${name === selectedSupp ? 'selected' : ''}>${name}</option>`).join('');
+  }
+}
+
+function renderSupplierStatement() {
+  const select = $('#supplier-statement-select');
+  const selectedSuppName = select?.value || (state.suppliers || [])[0]?.name || '';
+  const suppKey = normalizeText(selectedSuppName);
+  const supp = (state.suppliers || []).find(s => normalizeText(s.name) === suppKey);
+
+  const entries = [...(state.supplierLedger || []).filter(l => normalizeText(l.supplier) === suppKey)].reverse();
+  let totalDebit = 0;
+  let totalCredit = 0;
+  let runningBalance = 0;
+
+  if ($('#supp-summary-name')) $('#supp-summary-name').textContent = selectedSuppName || 'Select Supplier';
+  if ($('#supp-summary-contact')) $('#supp-summary-contact').textContent = [supp?.contactPerson, supp?.phone, supp?.gstin].filter(Boolean).join(' · ') || '—';
+  if ($('#supp-ledger-table-title')) $('#supp-ledger-table-title').textContent = selectedSuppName ? `Supplier Statement of Account — ${selectedSuppName}` : 'Supplier Statement of Account';
+
+  const rows = entries.map(entry => {
+    totalDebit += entry.debit || 0;
+    totalCredit += entry.credit || 0;
+    runningBalance += (entry.credit || 0) - (entry.debit || 0);
+    const bankAcc = entry.bankAccount || 'HDFC Bank Current A/C (50200012345678)';
+
+    return `
+      <tr>
+        <td>${entry.date}</td>
+        <td><strong>${entry.ref}</strong></td>
+        <td>${entry.desc}</td>
+        <td style="text-align:right;color:#2f855a;font-weight:700;">${entry.debit ? formatINR(entry.debit) : '—'}</td>
+        <td style="text-align:right;color:#1e293b;">${entry.credit ? formatINR(entry.credit) : '—'}</td>
+        <td style="text-align:right;font-weight:800;color:${runningBalance > 0 ? '#dc2626' : '#2f855a'};">${formatINR(runningBalance)}</td>
+        <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${bankAcc}</span></td>
+      </tr>
+    `;
+  }).join('');
+
+  if ($('#supp-total-purchases')) $('#supp-total-purchases').textContent = formatINR(totalCredit);
+  if ($('#supp-total-payments')) $('#supp-total-payments').textContent = formatINR(totalDebit);
+  if ($('#supp-net-balance')) $('#supp-net-balance').textContent = formatINR(runningBalance);
+
+  if ($('#supplier-statement-table')) {
+    $('#supplier-statement-table').innerHTML = rows || `<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:18px;">No purchase ledger transactions found for ${selectedSuppName || 'this supplier'}.</td></tr>`;
+  }
+}
+
+function renderVehicleModels() {
+  if ($('#vehicle-model-count-badge')) $('#vehicle-model-count-badge').textContent = (state.vehicleModels || []).length;
+
+  if ($('#vehicle-models-table')) {
+    $('#vehicle-models-table').innerHTML = (state.vehicleModels || []).map((vm, idx) => `
+      <tr>
+        <td><strong>${vm.name}</strong></td>
+        <td>${categoryBadge(vm.type || 'E-Rickshaw')}</td>
+        <td>${vm.motor || '1200W BLDC'}</td>
+        <td>${vm.batterySpec || 'LFP 51.2V 100Ah'}</td>
+        <td><span style="font-family:monospace;font-weight:700;">${vm.hsn || '87116010'}</span></td>
+        <td><strong>${vm.gstRate || 5}%</strong></td>
+        <td><strong style="color:#2f855a;">${formatINR(vm.price)}</strong></td>
+        <td>
+          <button class="secondary-btn btn-sell-vehicle-model-direct" data-idx="${idx}" style="padding:4px 8px;font-size:11px;background:#ebf8ff;color:#2b6cb0;font-weight:700;">↗ Sell Model</button>
+        </td>
+      </tr>
+    `).join('') || '<tr><td colspan="8" style="text-align:center;color:#a0aec0;padding:14px;">No EV vehicle models added yet.</td></tr>';
+  }
+}
+
+function renderVehicles() {
+  if ($('#vehicle-sales-table')) {
+    $('#vehicle-sales-table').innerHTML = (state.vehicleInvoices || []).map(vinv => `
+      <tr>
+        <td><strong>${vinv.invoice}</strong></td>
+        <td><strong>${vinv.party}</strong><br><small style="color:#64748b;">${vinv.phone || ''}</small></td>
+        <td>${vinv.model}</td>
+        <td><span style="font-family:monospace;font-weight:700;color:#2b6cb0;">${vinv.chassisNo}</span></td>
+        <td><span style="font-family:monospace;">${vinv.motorNo || '—'}</span></td>
+        <td><strong style="color:#1e293b;">${formatINR(vinv.grandTotal)}</strong></td>
+        <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${vinv.bankAccount || 'HDFC Bank Current A/C'}</span></td>
+        <td>${vinv.date}</td>
+        <td>${badge('Sold & Dispatched')}</td>
+      </tr>
+    `).join('') || '<tr><td colspan="9" style="text-align:center;color:#a0aec0;padding:16px;">No EV vehicle sales recorded yet.</td></tr>';
+  }
+
+  if ($('#vehicle-stock-table')) {
+    $('#vehicle-stock-table').innerHTML = (state.vehicles || []).map((v, idx) => `
+      <tr>
+        <td><strong style="font-family:monospace;color:#2b6cb0;">${v.chassisNo}</strong></td>
+        <td><strong>${v.model}</strong></td>
+        <td>${v.motorNo || '1200W BLDC'}</td>
+        <td><span style="font-family:monospace;">${v.batterySerial || 'LFP 51.2V 100Ah'}</span></td>
+        <td>${v.color || 'Standard'}</td>
+        <td><strong style="color:#2f855a;">${formatINR(v.price)}</strong></td>
+        <td>${badge(v.status || 'Available in Showroom')}</td>
+        <td>
+          ${v.status === 'Available in Showroom' 
+            ? `<button class="primary-btn btn-sell-vehicle-direct" data-idx="${idx}" style="padding:4px 9px;font-size:11px;background:#2b6cb0;">↗ Sell Vehicle</button>`
+            : `<span style="font-size:11px;color:#2f855a;font-weight:700;">Sold</span>`}
+        </td>
+      </tr>
+    `).join('') || '<tr><td colspan="8" style="text-align:center;color:#a0aec0;padding:16px;">No vehicles in showroom stock yet.</td></tr>';
+  }
+}
+
 function renderDealerStatement() {
   const select = $('#dealer-statement-select');
   const selectedDealer = select?.value || (state.dealers || [])[0]?.name || '';
@@ -4057,6 +4448,7 @@ function renderDealerStatement() {
     totalDebit += entry.debit || 0;
     totalCredit += entry.credit || 0;
     runningBalance += (entry.debit || 0) - (entry.credit || 0);
+    const bankAcc = entry.bankAccount || (entry.credit > 0 ? 'HDFC Bank Current A/C (50200012345678)' : 'Dealer Invoice Debit');
     return `
       <tr>
         <td>${entry.date}</td>
@@ -4065,6 +4457,7 @@ function renderDealerStatement() {
         <td style="text-align:right;">${entry.debit ? formatINR(entry.debit) : '—'}</td>
         <td style="text-align:right;color:#16a34a;">${entry.credit ? formatINR(entry.credit) : '—'}</td>
         <td style="text-align:right;font-weight:800;color:${runningBalance > 0 ? '#dc2626' : '#16a34a'};">${formatINR(runningBalance)}</td>
+        <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${bankAcc}</span></td>
       </tr>
     `;
   }).join('');
@@ -4074,7 +4467,7 @@ function renderDealerStatement() {
   if ($('#dlr-stat-balance')) $('#dlr-stat-balance').textContent = formatINR(runningBalance);
   if ($('#dealer-statement-sub')) $('#dealer-statement-sub').textContent = `Debits ${formatINR(totalDebit)} · Credits ${formatINR(totalCredit)} · Balance ${formatINR(runningBalance)}`;
   if ($('#dealer-statement-table')) {
-    $('#dealer-statement-table').innerHTML = rows || `<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:18px;">No B2B ledger entries found for ${selectedDealer || 'this dealer'}.</td></tr>`;
+    $('#dealer-statement-table').innerHTML = rows || `<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:18px;">No B2B ledger entries found for ${selectedDealer || 'this dealer'}.</td></tr>`;
   }
 }
 
@@ -4104,6 +4497,7 @@ function renderLedger() {
     totalDebit += (e.debit || 0);
     totalCredit += (e.credit || 0);
     runningBalance += ((e.debit || 0) - (e.credit || 0));
+    const bankAcc = e.bankAccount || (e.credit > 0 ? 'HDFC Bank Current A/C (50200012345678)' : 'Sales Invoice Debit');
 
     return `
       <tr>
@@ -4113,6 +4507,7 @@ function renderLedger() {
         <td style="text-align:right;color:#1e293b;">${e.debit ? '₹ ' + e.debit.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—'}</td>
         <td style="text-align:right;color:#16a34a;">${e.credit ? '₹ ' + e.credit.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—'}</td>
         <td style="text-align:right;font-weight:700;color:${runningBalance > 0 ? '#dc2626' : '#16a34a'};">₹ ${runningBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+        <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${bankAcc}</span></td>
       </tr>
     `;
   }).join('');
@@ -4125,8 +4520,198 @@ function renderLedger() {
   if ($('#ledger-sub-party')) $('#ledger-sub-party').textContent = `Total Debits: ₹${totalDebit.toFixed(2)} | Credits: ₹${totalCredit.toFixed(2)} | Balance: ₹${runningBalance.toFixed(2)}`;
 
   if ($('#ledger-statement-table')) {
-    $('#ledger-statement-table').innerHTML = statementRowsHtml || `<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:18px;">No ledger entries found for ${selectedParty}.</td></tr>`;
+    $('#ledger-statement-table').innerHTML = statementRowsHtml || `<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:18px;">No ledger entries found for ${selectedParty}.</td></tr>`;
   }
+}
+
+function openSupplierModal() {
+  const backdrop = $('#modal-backdrop');
+  if (!backdrop) return;
+
+  $('#modal-title').textContent = 'Register New Raw Material & Component Supplier';
+  $('#modal-fields').innerHTML = `
+    <div class="form-grid">
+      <div class="field full"><label style="font-weight:700;">Supplier / Vendor Firm Name *</label><input name="name" placeholder="E.g. EVE Energy Co., Ltd." required /></div>
+      <div class="field"><label style="font-weight:700;">Contact Person Name</label><input name="contactPerson" placeholder="E.g. Mr. Rajesh Sharma" /></div>
+      <div class="field"><label style="font-weight:700;">Phone / Mobile</label><input name="phone" placeholder="9876501234" /></div>
+      <div class="field"><label style="font-weight:700;">GSTIN / Tax ID Number</label><input name="gstin" placeholder="09AAACE1234F1Z1" /></div>
+      <div class="field"><label style="font-weight:700;">Supplier Category</label><select name="category"><option>Cell Manufacturer</option><option>BMS Supplier</option><option>Chargers &amp; Enclosures</option><option>General Component Distributor</option></select></div>
+      <div class="field"><label style="font-weight:700;">State / Location</label><input name="state" value="UTTAR PRADESH" /></div>
+      <div class="field full"><label style="font-weight:700;">Full Address / City</label><input name="address" placeholder="Noida Sector 63, UP" /></div>
+    </div>
+  `;
+
+  backdrop.removeAttribute('hidden');
+  backdrop.style.display = 'grid';
+  backdrop.dataset.kind = 'supplier';
+  setTimeout(() => $('#modal-fields input[name="name"]')?.focus(), 30);
+}
+
+function openSupplierPaymentModal(suppName = '') {
+  const backdrop = $('#modal-backdrop');
+  if (!backdrop) return;
+
+  const suppOptions = (state.suppliers || []).map(s => `<option value="${s.name}" ${s.name === suppName ? 'selected' : ''}>${s.name}</option>`).join('') || '<option value="EVE Energy Co., Ltd.">EVE Energy Co., Ltd.</option>';
+
+  $('#modal-title').textContent = 'Record Supplier Payment Debit (Bank A/C / Transfer)';
+  $('#modal-fields').innerHTML = `
+    <div class="form-grid">
+      <div class="field full"><label style="font-weight:700;">Select Supplier *</label><select name="supplier">${suppOptions}</select></div>
+      <div class="field"><label style="font-weight:700;">Payment Amount (₹) *</label><input name="amount" type="number" step="0.01" value="50000" required /></div>
+      <div class="field"><label style="font-weight:700;">Paying Bank Account / Mode *</label>
+        <select name="bankAccount" style="font-weight:700;">
+          <option value="HDFC Bank Current A/C (50200012345678)">HDFC Bank — Current A/C (50200012345678)</option>
+          <option value="ICICI Bank Business A/C (001105001234)">ICICI Bank — Business A/C (001105001234)</option>
+          <option value="SBI Corporate A/C (30981234567)">SBI — Corporate A/C (30981234567)</option>
+          <option value="UPI / PhonePe / GPay">UPI / PhonePe / GPay</option>
+          <option value="Cash in Hand">Cash in Hand</option>
+          <option value="Cheque / DD">Cheque / Demand Draft</option>
+        </select>
+      </div>
+      <div class="field"><label style="font-weight:700;">Payment Date *</label><input name="date" type="date" value="${new Date().toISOString().split('T')[0]}" required /></div>
+      <div class="field"><label style="font-weight:700;">Reference / UTR / Cheque No</label><input name="ref" value="UTR-${Date.now().toString().slice(-6)}" /></div>
+      <div class="field full"><label style="font-weight:700;">Remarks / Notes</label><input name="notes" placeholder="NEFT Bank Transfer for Cell Batch Invoice" /></div>
+    </div>
+  `;
+
+  backdrop.removeAttribute('hidden');
+  backdrop.style.display = 'grid';
+  backdrop.dataset.kind = 'supplier-pay';
+}
+
+function openVehicleModelModal() {
+  const backdrop = $('#modal-backdrop');
+  if (!backdrop) return;
+
+  $('#modal-title').textContent = 'Add EV Vehicle Model to Catalog';
+  $('#modal-fields').innerHTML = `
+    <div class="form-grid">
+      <div class="field full"><label style="font-weight:700;">Vehicle Model Name *</label><input name="name" value="Deltic Star E-Rickshaw (L5)" required /></div>
+      <div class="field"><label style="font-weight:700;">Vehicle Category / Type *</label><select name="type"><option>Passenger 3W E-Rickshaw</option><option>Commercial 3W Cargo Loader</option><option>Heavy Duty 3W E-Loader</option><option>2W High-Speed EV Scooter</option></select></div>
+      <div class="field"><label style="font-weight:700;">Motor Specifications</label><input name="motor" value="1200W BLDC Heavy Duty" /></div>
+      <div class="field"><label style="font-weight:700;">Recommended Battery Pack</label><input name="batterySpec" value="LFP 51.2V 100Ah" /></div>
+      <div class="field"><label style="font-weight:700;">Vehicle HSN Code</label><input name="hsn" value="87116010" /></div>
+      <div class="field"><label style="font-weight:700;">GST Rate (%)</label><input name="gstRate" type="number" value="5" /></div>
+      <div class="field full"><label style="font-weight:700;">Retail Ex-Showroom Price (₹) *</label><input name="price" type="number" value="145000" style="font-weight:800;" required /></div>
+    </div>
+  `;
+
+  backdrop.removeAttribute('hidden');
+  backdrop.style.display = 'grid';
+  backdrop.dataset.kind = 'vehicle-model';
+}
+
+function openAddVehicleStockModal() {
+  const backdrop = $('#modal-backdrop');
+  if (!backdrop) return;
+
+  const modelOptions = (state.vehicleModels || []).map(vm => `<option value="${vm.name}">${vm.name} (${vm.type})</option>`).join('') || '<option value="Deltic Star E-Rickshaw (L5)">Deltic Star E-Rickshaw (L5)</option>';
+
+  const batteryOptions = (state.production || []).filter(p => p.qc === 'Passed' || p.status === 'Saleable').map(p => `<option value="${p.serial}">${p.serial} (${p.model})</option>`).join('') || '<option value="LFP 51.2V 100Ah">LFP 51.2V 100Ah Pack</option>';
+
+  $('#modal-title').textContent = 'Add EV Vehicle to Showroom Inventory';
+  $('#modal-fields').innerHTML = `
+    <div class="form-grid">
+      <div class="field full"><label style="font-weight:700;">Select Vehicle Model *</label><select name="model" id="veh-stock-model-select">${modelOptions}</select></div>
+      <div class="field"><label style="font-weight:700;">Chassis / VIN Number *</label><input name="chassisNo" value="CHASSIS-DELTIC-2026-${Date.now().toString().slice(-4)}" required /></div>
+      <div class="field"><label style="font-weight:700;">Motor Serial Number *</label><input name="motorNo" value="MTR-1200W-${Date.now().toString().slice(-4)}" required /></div>
+      <div class="field"><label style="font-weight:700;">Battery Serial Installed</label><select name="batterySerial">${batteryOptions}</select></div>
+      <div class="field"><label style="font-weight:700;">Vehicle Color</label><input name="color" value="Glossy Royal Blue" /></div>
+      <div class="field full"><label style="font-weight:700;">Retail Ex-Showroom Price (₹) *</label><input name="price" id="veh-stock-price" type="number" value="145000" style="font-weight:800;" required /></div>
+    </div>
+  `;
+
+  backdrop.removeAttribute('hidden');
+  backdrop.style.display = 'grid';
+  backdrop.dataset.kind = 'vehicle-stock';
+}
+
+function openVehicleSaleModal(chassisIdx = null) {
+  const backdrop = $('#modal-backdrop');
+  if (!backdrop) return;
+
+  const targetVeh = chassisIdx !== null ? (state.vehicles || [])[chassisIdx] : null;
+
+  const vehStockOptions = (state.vehicles || []).filter(v => v.status === 'Available in Showroom' || (targetVeh && v.chassisNo === targetVeh.chassisNo)).map(v => `<option value="${v.chassisNo}" ${targetVeh && v.chassisNo === targetVeh.chassisNo ? 'selected' : ''}>${v.chassisNo} — ${v.model} (${formatINR(v.price)})</option>`).join('') || '<option value="CHASSIS-DELTIC-2026-0089">CHASSIS-DELTIC-2026-0089 — Deltic Star E-Rickshaw</option>';
+
+  const initialVeh = targetVeh || (state.vehicles || [])[0] || { model: 'Deltic Star E-Rickshaw (L5)', motorNo: 'MTR-1200W-8891', batterySerial: 'BAT-2026-000048', color: 'Glossy Royal Blue', price: 145000 };
+
+  $('#modal-title').textContent = 'Record EV Vehicle Sale & Issue Tax Invoice';
+  $('#modal-fields').innerHTML = `
+    <div class="form-grid">
+      <div class="field full" style="background:#ebf8ff;padding:10px;border-radius:6px;border:1px solid #bee3f8;">
+        <label style="font-weight:800;color:#2b6cb0;">Select Vehicle from Showroom Stock *</label>
+        <select name="chassisNo" id="veh-sale-chassis-select" style="font-weight:700;width:100%;padding:6px;">${vehStockOptions}</select>
+      </div>
+
+      <div class="field"><label style="font-weight:700;">Vehicle Model Name</label><input name="model" id="veh-sale-model" value="${initialVeh.model}" readonly style="background:#edf2f7;" /></div>
+      <div class="field"><label style="font-weight:700;">Motor Number</label><input name="motorNo" id="veh-sale-motor" value="${initialVeh.motorNo || ''}" readonly style="background:#edf2f7;" /></div>
+      <div class="field"><label style="font-weight:700;">Battery Serial Installed</label><input name="batterySerial" id="veh-sale-battery" value="${initialVeh.batterySerial || ''}" readonly style="background:#edf2f7;" /></div>
+      <div class="field"><label style="font-weight:700;">Vehicle Color</label><input name="color" id="veh-sale-color" value="${initialVeh.color || ''}" readonly style="background:#edf2f7;" /></div>
+
+      <div class="field full"><label style="font-weight:800;color:#2b6cb0;">Customer / Dealer Name (Auto-Suggest Database) *</label>
+        <input name="party" id="veh-sale-party-input" list="dealers-datalist" placeholder="Type or select Customer/Dealer..." value="RANJEET KUMAR" required style="font-weight:700;" />
+        <datalist id="dealers-datalist">
+          ${(state.dealers || []).map(d => `<option value="${d.name}">${d.name} (${d.gstin || 'Dealer'})</option>`).join('')}
+          ${(state.invoices || []).map(i => `<option value="${i.party}">${i.party}</option>`).join('')}
+        </datalist>
+      </div>
+
+      <div class="field"><label style="font-weight:700;">Phone / Mobile</label><input name="phone" id="veh-sale-phone" value="9876543210" /></div>
+      <div class="field"><label style="font-weight:700;">Customer / Dealer State</label><input name="partyState" id="veh-sale-state" value="UTTAR PRADESH" /></div>
+      <div class="field full"><label style="font-weight:700;">Full Address / City</label><input name="address" id="veh-sale-address" value="Gaighat, Gorakhpur" /></div>
+
+      <div class="field"><label style="font-weight:700;">Receiving Bank Account / Payment Mode *</label>
+        <select name="bankAccount" style="font-weight:700;">
+          <option value="HDFC Bank Current A/C (50200012345678)">HDFC Bank — Current A/C (50200012345678)</option>
+          <option value="ICICI Bank Business A/C (001105001234)">ICICI Bank — Business A/C (001105001234)</option>
+          <option value="SBI Corporate A/C (30981234567)">SBI — Corporate A/C (30981234567)</option>
+          <option value="UPI / PhonePe / GPay">UPI / PhonePe / GPay</option>
+          <option value="Cash in Hand">Cash in Hand</option>
+          <option value="Cheque / DD">Cheque / Demand Draft</option>
+        </select>
+      </div>
+
+      <div class="field"><label style="font-weight:700;">Vehicle HSN Code</label><input name="hsn" value="87116010" /></div>
+
+      <div class="field"><label style="font-weight:800;color:#2f855a;">Grand Total Sale Price (₹) *</label><input name="grandTotal" id="veh-sale-total" type="number" value="${initialVeh.price || 145000}" style="font-weight:800;font-size:15px;color:#2f855a;" required /></div>
+      <div class="field"><label style="font-weight:800;color:#2b6cb0;">Upfront Payment Received (₹) *</label><input name="paidAmount" id="veh-sale-paid" type="number" value="${initialVeh.price || 145000}" style="font-weight:800;font-size:15px;" required /></div>
+    </div>
+  `;
+
+  backdrop.removeAttribute('hidden');
+  backdrop.style.display = 'grid';
+  backdrop.dataset.kind = 'vehicle-sale';
+
+  $('#veh-sale-chassis-select')?.addEventListener('change', (e) => {
+    const chassis = e.target.value;
+    const veh = (state.vehicles || []).find(v => v.chassisNo === chassis);
+    if (veh) {
+      $('#veh-sale-model').value = veh.model;
+      $('#veh-sale-motor').value = veh.motorNo || '';
+      $('#veh-sale-battery').value = veh.batterySerial || '';
+      $('#veh-sale-color').value = veh.color || '';
+      $('#veh-sale-total').value = veh.price || 145000;
+      $('#veh-sale-paid').value = veh.price || 145000;
+    }
+  });
+
+  $('#veh-sale-party-input')?.addEventListener('change', (e) => {
+    const name = e.target.value;
+    const dealer = (state.dealers || []).find(d => normalizeText(d.name) === normalizeText(name));
+    if (dealer) {
+      if ($('#veh-sale-phone')) $('#veh-sale-phone').value = dealer.phone || '';
+      if ($('#veh-sale-state')) $('#veh-sale-state').value = dealer.state || 'UTTAR PRADESH';
+      if ($('#veh-sale-address')) $('#veh-sale-address').value = [dealer.address, dealer.city].filter(Boolean).join(', ');
+    } else {
+      const inv = (state.invoices || []).find(i => normalizeText(i.party) === normalizeText(name));
+      if (inv) {
+        if ($('#veh-sale-phone')) $('#veh-sale-phone').value = inv.phone || '';
+        if ($('#veh-sale-state')) $('#veh-sale-state').value = inv.partyState || 'UTTAR PRADESH';
+        if ($('#veh-sale-address')) $('#veh-sale-address').value = inv.address || '';
+      }
+    }
+  });
 }
 
 function bind() {
@@ -4282,11 +4867,59 @@ function bind() {
       return;
     }
 
+    // EV Vehicle & Supplier button handlers
+    if (e.target.id === 'btn-open-vehicle-sale-modal' || e.target.closest('.btn-sell-vehicle-model-direct')) {
+      e.preventDefault();
+      openVehicleSaleModal();
+      return;
+    }
+
+    const sellVehDirectBtn = e.target.closest('.btn-sell-vehicle-direct');
+    if (sellVehDirectBtn) {
+      e.preventDefault();
+      const idx = Number(sellVehDirectBtn.dataset.idx);
+      openVehicleSaleModal(idx);
+      return;
+    }
+
+    if (e.target.id === 'btn-open-vehicle-stock-modal' || e.target.id === 'btn-add-vehicle-stock-trigger') {
+      e.preventDefault();
+      openAddVehicleStockModal();
+      return;
+    }
+
+    if (e.target.id === 'btn-add-vehicle-model-trigger') {
+      e.preventDefault();
+      openVehicleModelModal();
+      return;
+    }
+
+    if (e.target.id === 'btn-open-supplier-pay-modal' || e.target.id === 'btn-record-supp-payment-direct') {
+      e.preventDefault();
+      const suppSelect = $('#supplier-statement-select');
+      openSupplierPaymentModal(suppSelect ? suppSelect.value : '');
+      return;
+    }
+
+    const viewSuppBtn = e.target.closest('.btn-view-supp-statement');
+    if (viewSuppBtn) {
+      e.preventDefault();
+      const suppName = viewSuppBtn.dataset.supp;
+      const suppSelect = $('#supplier-statement-select');
+      if (suppSelect) {
+        suppSelect.value = suppName;
+        renderSupplierStatement();
+      }
+      showView('purchase-ledger');
+      return;
+    }
+
     const modalBtn = e.target.closest('[data-modal]');
     if (modalBtn) {
       e.preventDefault();
       const kind = modalBtn.dataset.modal.replace('-modal', '');
-      openModal(kind);
+      if (kind === 'supplier') openSupplierModal();
+      else openModal(kind);
       return;
     }
 
@@ -4317,6 +4950,9 @@ function bind() {
   });
   $('#dealer-statement-select')?.addEventListener('change', () => {
     renderDealerStatement();
+  });
+  $('#supplier-statement-select')?.addEventListener('change', () => {
+    renderSupplierStatement();
   });
 
   // Modal controls
