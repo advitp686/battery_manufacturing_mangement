@@ -2569,9 +2569,18 @@ function openModal(kind) {
   if (kind === 'stock') {
     $('#modal-title').textContent = 'Receive stock batch (Components & Extras)';
 
-    const compOptions = state.components.map(c => `
+    const compOptions = (state.components || []).map(c => `
       <option value="${c.id}">${c.name} (${c.category})</option>
     `).join('');
+
+    const registeredPartyOptions = `
+      <optgroup label="Registered Dealers (Master Database)">
+        ${(state.dealers || []).map(d => `<option value="${d.name}">${d.name} (${d.gstin || 'Dealer'})</option>`).join('')}
+      </optgroup>
+      <optgroup label="Registered Suppliers">
+        ${(state.suppliers || []).map(s => `<option value="${s.name}">${s.name} (${s.category || 'Supplier'})</option>`).join('')}
+      </optgroup>
+    `;
 
     $('#modal-fields').innerHTML = `
       <div class="form-grid">
@@ -2586,14 +2595,40 @@ function openModal(kind) {
             </optgroup>
           </select>
         </div>
-        <div class="field"><label>Supplier Batch Code</label><input name="batch" value="REC-2026-${Date.now().toString().slice(-4)}" required /></div>
-        <div class="field"><label>Material / Item Name</label><input id="stock-material-name" name="material" value="${state.components[0]?.name || ''}" required /></div>
-        <div class="field"><label>Category / Type (e.g. BMS, Cell, Charger, Extra)</label><input id="stock-category-name" name="category" value="${state.components[0]?.category || 'BMS'}" required /></div>
-        <div class="field"><label>Supplier Name</label><input id="stock-supplier-name" name="supplier" value="${state.components[0]?.supplier || ''}" required /></div>
-        <div class="field"><label>Quantity Received</label><input name="quantity" type="number" value="50" min="1" required /></div>
-        <div class="field"><label>Unit Cost (₹)</label><input id="stock-unit-cost" name="unit_cost" type="number" value="${state.components[0]?.price || 0}" /></div>
-        <div class="field"><label>Storage Location</label><input name="location" value="Main workshop" required /></div>
-        <div class="field full"><label>Document Reference / PO</label><input name="document" value="PO-2026-042" /></div>
+        <div class="field"><label style="font-weight:700;">Supplier Batch Code</label><input name="batch" value="REC-2026-${Date.now().toString().slice(-4)}" required /></div>
+        <div class="field"><label style="font-weight:700;">Material / Item Name</label><input id="stock-material-name" name="material" value="${state.components[0]?.name || ''}" required /></div>
+        <div class="field"><label style="font-weight:700;">Category / Type</label><input id="stock-category-name" name="category" value="${state.components[0]?.category || 'BMS'}" required /></div>
+
+        <div class="field full" style="background:#f0f9ff;padding:10px;border-radius:6px;border:1px solid #bae6fd;">
+          <label style="font-weight:800;color:#0369a1;">Select Registered Dealer or Supplier (Auto Party Ledger Update) *</label>
+          <input id="stock-supplier-name" name="supplier" list="stock-party-datalist" placeholder="Type or select Registered Dealer / Supplier..." value="${state.components[0]?.supplier || ((state.dealers || [])[0]?.name || 'Daly Electronics')}" style="font-weight:700;width:100%;padding:7px;border:1px solid #0284c7;border-radius:4px;" required />
+          <datalist id="stock-party-datalist">
+            ${registeredPartyOptions}
+          </datalist>
+        </div>
+
+        <div class="field"><label style="font-weight:700;">Quantity Received</label><input name="quantity" type="number" value="50" min="1" required /></div>
+        <div class="field"><label style="font-weight:700;">Unit Cost (₹)</label><input id="stock-unit-cost" name="unit_cost" type="number" value="${state.components[0]?.price || 0}" /></div>
+
+        <div class="field"><label style="font-weight:700;">Payment Status / Mode</label>
+          <select name="payment_status" style="font-weight:700;">
+            <option value="Unpaid">On Credit Ledger (Unpaid)</option>
+            <option value="Paid">Paid via Bank A/C</option>
+          </select>
+        </div>
+
+        <div class="field"><label style="font-weight:700;">Paying Bank Account</label>
+          <select name="bankAccount" style="font-weight:700;">
+            <option value="HDFC Bank Current A/C (50200012345678)">HDFC Bank — Current A/C (50200012345678)</option>
+            <option value="ICICI Bank Business A/C (001105001234)">ICICI Bank — Business A/C (001105001234)</option>
+            <option value="SBI Corporate A/C (30981234567)">SBI — Corporate A/C (30981234567)</option>
+            <option value="UPI / PhonePe / GPay">UPI / PhonePe / GPay</option>
+            <option value="Cash in Hand">Cash in Hand</option>
+          </select>
+        </div>
+
+        <div class="field"><label style="font-weight:700;">Storage Location</label><input name="location" value="Main workshop" required /></div>
+        <div class="field full"><label style="font-weight:700;">Document Reference / PO</label><input name="document" value="PO-2026-042" /></div>
       </div>
     `;
 
@@ -3252,6 +3287,7 @@ function submitModal(e) {
     const totalPurchaseAmt = qty * unitPrice;
     const suppName = data.supplier || 'General Vendor';
     const bankAccount = data.bankAccount || 'HDFC Bank Current A/C (50200012345678)';
+    const isPaid = data.payment_status === 'Paid';
 
     state.inventory.unshift({
       batch: data.batch,
@@ -3266,33 +3302,87 @@ function submitModal(e) {
     });
 
     if (totalPurchaseAmt > 0) {
+      // 1. Post to Supplier Purchase Ledger
       if (!state.supplierLedger) state.supplierLedger = [];
-      let totalCredit = 0;
-      let totalDebit = 0;
+      let suppCredit = 0;
+      let suppDebit = 0;
       state.supplierLedger.filter(l => normalizeText(l.supplier) === normalizeText(suppName)).forEach(l => {
-        totalCredit += (l.credit || 0);
-        totalDebit += (l.debit || 0);
+        suppCredit += (l.credit || 0);
+        suppDebit += (l.debit || 0);
       });
-      const currentBal = totalCredit - totalDebit;
-      const newBal = currentBal + totalPurchaseAmt;
+      const currentSuppBal = suppCredit - suppDebit;
 
       state.supplierLedger.unshift({
         id: 'SLEDG-' + Date.now().toString().slice(-4),
         date: todayStr,
         supplier: suppName,
         ref: data.batch || ('BILL-' + Date.now().toString().slice(-4)),
-        desc: `Stock Receipt Purchase: ${data.material} (Qty: ${qty})`,
+        desc: `Stock Purchase Bill: ${data.material} (Qty: ${qty} @ ₹${unitPrice})`,
         debit: 0,
         credit: totalPurchaseAmt,
-        balance: newBal,
+        balance: currentSuppBal + totalPurchaseAmt,
         bankAccount
       });
+
+      if (isPaid) {
+        state.supplierLedger.unshift({
+          id: 'SLEDG-PAY-' + Date.now().toString().slice(-4),
+          date: todayStr,
+          supplier: suppName,
+          ref: 'PAY-' + (data.batch || Date.now().toString().slice(-4)),
+          desc: `Stock Receipt Payment via ${bankAccount}`,
+          debit: totalPurchaseAmt,
+          credit: 0,
+          balance: currentSuppBal,
+          bankAccount
+        });
+      }
+
+      // 2. Post to Main Party / Dealer Ledger (state.ledger) so Dealer / Customer Statement is updated automatically!
+      if (!state.ledger) state.ledger = [];
+      const isDealer = (state.dealers || []).some(d => normalizeText(d.name) === normalizeText(suppName));
+
+      let partyDebit = 0;
+      let partyCredit = 0;
+      state.ledger.filter(l => normalizeText(l.party) === normalizeText(suppName)).forEach(l => {
+        partyDebit += (l.debit || 0);
+        partyCredit += (l.credit || 0);
+      });
+
+      // Stock purchase from party creates credit entry in party ledger
+      state.ledger.push({
+        id: 'LEDG-STK-' + Date.now().toString().slice(-4),
+        date: todayStr,
+        party: suppName,
+        partyType: isDealer ? 'Dealer' : 'Supplier/Vendor',
+        ref: data.batch || ('REC-' + Date.now().toString().slice(-4)),
+        desc: `Stock Received: ${data.material} (${qty} units @ ₹${unitPrice})`,
+        debit: 0,
+        credit: totalPurchaseAmt,
+        balance: (partyDebit - partyCredit) - totalPurchaseAmt,
+        bankAccount
+      });
+
+      if (isPaid) {
+        state.ledger.push({
+          id: 'LEDG-STK-PAY-' + Date.now().toString().slice(-4),
+          date: todayStr,
+          party: suppName,
+          partyType: isDealer ? 'Dealer' : 'Supplier/Vendor',
+          ref: 'PAY-' + (data.batch || Date.now().toString().slice(-4)),
+          desc: `Stock Receipt Payment Made via ${bankAccount}`,
+          debit: totalPurchaseAmt,
+          credit: 0,
+          balance: (partyDebit - partyCredit),
+          bankAccount
+        });
+      }
     }
 
     saveState();
     render();
     showView('inventory');
-    toast(`Stock receipt ${data.batch} logged (${formatINR(totalPurchaseAmt)} posted to ${suppName} Purchase Ledger)`);
+    toast(`Stock receipt ${data.batch} logged (${formatINR(totalPurchaseAmt)} automatically posted to ${suppName} Party Ledger)`);
   }
 
   if (kind === 'supplier') {
