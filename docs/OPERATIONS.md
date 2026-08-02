@@ -1,34 +1,26 @@
-# Operations guide
+# Lithynova Web Application Operations Guide 🔋⚡
 
-## First use
+## First Use & Profile Access
 
-Sign in with `admin` / `ChangeMe123!`, then change the administrator password
-before adding business data. Add battery models, receive component/cell batches,
-and then create finished packs using Production & QC.
+1. Open the Web Application in your web browser (e.g. via `.\start-app.ps1` or `npm start`).
+2. Switch to **Administrator** profile (Default password: `ChangeMe123!`). Change the admin password in **System Settings ➔ Company Profile** before logging production data.
+3. Configure battery models, component HSN/GST rates, and initial raw material stock batches.
+4. Finished packs are assembled via **Production & QC**. Passing QC marks a pack as `Saleable` and generates its ISO QR code and unique serial number.
 
-Only a passed QC pack becomes `Saleable`. Every pass generates a unique serial
-and opaque QR token. Generate the QR label from the selected pack row.
+## Sales, Invoicing & Warranty Workflows
 
-## Sales and warranty
+- **Direct Retail Sale**: Generates a GST-compliant sales invoice and automatically activates the pack's warranty coverage.
+- **Dealer Sale**: Allocates the pack as `DealerStock`. The warranty is activated once staff registers the end-customer under **Warranty & Claims**.
+- **Warranty Claims & Repair Billing**: Open claims for defective packs, log replacement components/service charges, and generate itemized repair invoices.
 
-- A direct retail sale creates a receipt, activates its warranty, and creates a
-  warranty certificate.
-- A dealer sale moves the pack to `DealerStock`; it cannot be claimed until staff
-  registers the actual end customer under Warranty & claims.
-- Claim replacements require an unused saleable pack and retain the original
-  warranty dates.
+## QR Traceability & Google Sheets Cloud Synchronization
 
-## QR and Google synchronization
+1. Follow the guide in `public-qr/` to deploy the Google Apps Script.
+2. In **System Settings ➔ Cloud Sync**, enter your Web App `/exec` URL and secret key.
+3. The web application operates offline-first. Pending transactions are automatically synced to Google Sheets when internet connection is available or when clicking **Sync Sheets**.
 
-Use the `public-qr` setup guide to deploy the Apps Script. Save the same `/exec`
-URL as the QR base URL and Apps Script sync URL, along with the secret from script
-properties. The system queues records while offline; **Publish pending QR records**
-retries the queue manually. Do not put the private customer/sales workbook into
-the public QR sheet.
+## Data Persistence & Backup Management
 
-## Local backups
-
-Create a backup before system upgrades and at the end of each business day. The
-application database and generated documents reside in `%LOCALAPPDATA%\BatteryManagement`
-for the signed-in Windows user.
-Copy that directory to a controlled Drive folder until OAuth Drive backup is configured.
+- System data is automatically stored in browser persistent storage (`localStorage` + `IndexedDB`).
+- To create a full system backup, go to **System Settings ➔ Database Storage & Backup Tools** and click **Backup System Data (JSON Export)**.
+- Store JSON backups safely on your local drive or cloud storage.

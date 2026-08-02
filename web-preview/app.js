@@ -321,6 +321,52 @@ const state = {
   ]
 };
 
+// ═══════════════════════════════════════════════════════════════════════
+// SQLite Backend API Configuration (v3.0)
+// ═══════════════════════════════════════════════════════════════════════
+const LITHYNOVA_API_KEY = 'lithynova-factory-2024';
+let _serverOnline = false;
+let _syncDebounceTimer = null;
+
+/** Check if SQLite backend is available and auto-migrate localStorage data */
+async function checkAndMigrate() {
+  try {
+    const healthRes = await fetch('/api/health');
+    if (!healthRes.ok) return;
+    const health = await healthRes.json();
+    _serverOnline = true;
+
+    // If server DB is empty and we have local data, auto-migrate
+    if (health.totalRecords === 0 && localStorage.getItem('voltforge_state_v3')) {
+      console.log('[SQLite] Empty database detected. Auto-migrating localStorage data...');
+      const migrateRes = await fetch('/api/migrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': LITHYNOVA_API_KEY },
+        body: localStorage.getItem('voltforge_state_v3')
+      });
+      if (migrateRes.ok) {
+        const result = await migrateRes.json();
+        console.log('[SQLite] Migration complete:', result.counts);
+        toast('✅ Data migrated to SQLite database successfully!');
+      }
+    }
+  } catch (e) {
+    _serverOnline = false;
+    console.log('[SQLite] Server not available, using local storage mode.');
+  }
+}
+
+/** Show offline mode banner in the UI */
+function showOfflineBanner() {
+  const engineEl = document.getElementById('db-engine-type');
+  const healthEl = document.getElementById('db-health-status');
+  if (engineEl) engineEl.textContent = '⚠️ OFFLINE MODE — Server Unreachable';
+  if (healthEl) healthEl.textContent = '🟡 Reading from local cache (read-only)';
+  if (document.getElementById('sidebar-sync-title')) document.getElementById('sidebar-sync-title').textContent = 'Local Cache Mode';
+  if (document.getElementById('sidebar-sync-sub')) document.getElementById('sidebar-sync-sub').textContent = 'Reading local storage';
+  if (document.getElementById('sidebar-sync-dot')) document.getElementById('sidebar-sync-dot').style.background = '#e2a62b';
+}
+
 function numberToWords(num) {
   num = Math.round(num || 0);
   if (num === 0) return 'ZERO ONLY';
@@ -624,6 +670,82 @@ function nextInvoiceNumber() {
   return `${prefix}${nextSeq}`;
 }
 
+function allocatePaymentToPartyInvoices(partyName, paymentAmount) {
+  if (!partyName || paymentAmount <= 0) return;
+  const partyKey = normalizeText(partyName);
+  let remaining = roundMoney(paymentAmount);
+  
+  const unpaidInvoices = (state.invoices || [])
+    .filter(inv => normalizeText(inv.party) === partyKey && roundMoney(inv.balanceAmount || 0) > 0)
+    .sort((a, b) => (parseFlexibleDate(a.date) || 0) - (parseFlexibleDate(b.date) || 0));
+
+  for (const inv of unpaidInvoices) {
+    if (remaining <= 0) break;
+    const balance = roundMoney(inv.balanceAmount || 0);
+    const apply = Math.min(remaining, balance);
+    inv.paidAmount = roundMoney((inv.paidAmount || 0) + apply);
+    inv.balanceAmount = roundMoney(balance - apply);
+    remaining = roundMoney(remaining - apply);
+  }
+}
+
+function cancelSalesInvoice(invNo, reason = 'User requested cancellation') {
+  if (!invNo) return;
+  const inv = (state.invoices || []).find(i => i.invoice === invNo);
+  if (!inv) {
+    toast(`Invoice ${invNo} not found.`);
+    return;
+  }
+  if (inv.warrantyStatus === 'Cancelled') {
+    toast(`Invoice ${invNo} is already cancelled.`);
+    return;
+  }
+
+  if (!confirm(`Are you sure you want to cancel Tax Invoice ${invNo}?\n\nThis will:\n• Reverse party ledger balance\n• Restore battery pack(s) to Saleable stock\n• Cancel active warranty coverage`)) {
+    return;
+  }
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  inv.balanceAmount = 0;
+  inv.warrantyStatus = 'Cancelled';
+
+  const partyKey = normalizeText(inv.party);
+  let debitSum = 0;
+  let creditSum = 0;
+  state.ledger.filter(l => normalizeText(l.party) === partyKey).forEach(l => {
+    debitSum += (l.debit || 0);
+    creditSum += (l.credit || 0);
+  });
+
+  state.ledger.unshift({
+    id: 'LEDG-CN-' + Date.now().toString().slice(-4),
+    date: todayStr,
+    party: inv.party,
+    partyType: inv.type,
+    ref: 'CN-' + invNo.replace(/[\/]/g, '-'),
+    desc: `Sale Cancellation (${invNo}) — ${reason}`,
+    debit: 0,
+    credit: inv.grandTotal,
+    balance: roundMoney((debitSum - creditSum) - inv.grandTotal),
+    bankAccount: 'Sale Cancellation Reversal'
+  });
+
+  (inv.items || []).forEach(item => {
+    if (item.packSerial) {
+      const pack = (state.production || []).find(p => p.serial === item.packSerial || p.id === item.packSerial);
+      if (pack) pack.status = 'Saleable';
+
+      const w = (state.warranties || []).find(war => war.pack === item.packSerial);
+      if (w) w.status = 'Cancelled';
+    }
+  });
+
+  saveState();
+  render();
+  toast(`❌ Tax Invoice ${invNo} has been cancelled.`);
+}
+
 function isUserAdmin() {
   const role = getCurrentUserRole();
   return String(role || '').toLowerCase().includes('admin');
@@ -697,17 +819,60 @@ function updateDatabaseMetricsUI() {
                     (state.vehicles || []).length;
 
   if ($('#db-total-records')) $('#db-total-records').textContent = `${totalRecs.toLocaleString('en-IN')} Records`;
-  if ($('#db-engine-type')) $('#db-engine-type').textContent = window.indexedDB ? 'IndexedDB Enterprise DB (Unlimited Capacity)' : 'HTML5 Persistent Local Storage';
+  if ($('#db-engine-type')) {
+    if (_serverOnline) {
+      $('#db-engine-type').textContent = '⚡ SQLite Database Engine (Server-Backed)';
+    } else {
+      $('#db-engine-type').textContent = window.indexedDB ? 'IndexedDB Enterprise DB (Unlimited Capacity)' : 'HTML5 Persistent Local Storage';
+    }
+  }
   if ($('#db-health-status')) {
     const isCloudConfigured = Boolean(localStorage.getItem('tejas_appscript_url'));
-    $('#db-health-status').textContent = isCloudConfigured ? '🟢 100% Fail-Safe (Local DB + Cloud Sync)' : '🟢 100% Fail-Safe (Local DB Ready)';
+    if (_serverOnline) {
+      $('#db-health-status').textContent = isCloudConfigured ? '🟢 100% Fail-Safe (SQLite + Cloud Sync)' : '🟢 100% Fail-Safe (SQLite Server Ready)';
+    } else {
+      $('#db-health-status').textContent = isCloudConfigured ? '🟢 100% Fail-Safe (Local DB + Cloud Sync)' : '🟢 100% Fail-Safe (Local DB Ready)';
+    }
+  }
+
+  // Update Sidebar Sync Card
+  if ($('#sidebar-sync-title')) {
+    if (_serverOnline) {
+      $('#sidebar-sync-title').textContent = '⚡ SQLite Connected';
+      if ($('#sidebar-sync-sub')) $('#sidebar-sync-sub').textContent = 'Server database active';
+      if ($('#sidebar-sync-dot')) $('#sidebar-sync-dot').style.background = '#39b77b';
+    } else {
+      $('#sidebar-sync-title').textContent = 'Local Cache Mode';
+      if ($('#sidebar-sync-sub')) $('#sidebar-sync-sub').textContent = 'Reading local storage';
+      if ($('#sidebar-sync-dot')) $('#sidebar-sync-dot').style.background = '#e2a62b';
+    }
   }
 }
 
 function saveState() {
   try {
+    // Always save to localStorage + IndexedDB as fallback
     localStorage.setItem('voltforge_state_v3', JSON.stringify(state));
     saveStateToDB(state);
+
+    // Sync to SQLite backend (debounced to avoid flooding on rapid edits)
+    if (_serverOnline) {
+      clearTimeout(_syncDebounceTimer);
+      _syncDebounceTimer = setTimeout(() => {
+        fetch('/api/sync-state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': LITHYNOVA_API_KEY },
+          body: JSON.stringify(state)
+        }).then(res => {
+          if (!res.ok) console.warn('[SQLite] Sync failed:', res.status);
+        }).catch(e => {
+          console.warn('[SQLite] Sync error, server may be offline:', e.message);
+          _serverOnline = false;
+          showOfflineBanner();
+        });
+      }, 300);
+    }
+
     syncToGoogleSheets(false);
     updateDatabaseMetricsUI();
   } catch (e) {
@@ -802,6 +967,7 @@ function syncToGoogleSheets(manual = false) {
 }
 
 function loadState() {
+  // Step 1: Load from localStorage immediately (synchronous, fast)
   try {
     const saved = localStorage.getItem('voltforge_state_v3');
     if (saved) {
@@ -815,24 +981,56 @@ function loadState() {
       }
     }
   } catch (e) {
-    console.warn('Failed to load state', e);
+    console.warn('Failed to load state from localStorage', e);
   }
 
-  // Asynchronously load from IndexedDB for high-capacity database persistence
-  loadStateFromDB().then(dbData => {
-    if (dbData && typeof dbData === 'object') {
-      const dbRecs = (dbData.invoices || []).length + (dbData.inventory || []).length;
-      const curRecs = (state.invoices || []).length + (state.inventory || []).length;
-      if (dbRecs >= curRecs) {
-        Object.keys(dbData).forEach(k => {
-          if (Array.isArray(dbData[k])) {
-            state[k] = dbData[k];
+  // Step 2: Try loading from SQLite backend (async, authoritative if available)
+  fetch('/api/load-state', {
+    headers: { 'X-API-Key': LITHYNOVA_API_KEY }
+  }).then(res => {
+    if (!res.ok) throw new Error('Server returned ' + res.status);
+    return res.json();
+  }).then(serverState => {
+    _serverOnline = true;
+    if (serverState && typeof serverState === 'object') {
+      // Count server records
+      let serverRecs = 0;
+      Object.values(serverState).forEach(v => { if (Array.isArray(v)) serverRecs += v.length; });
+
+      if (serverRecs > 0) {
+        // Server has data — use it as authoritative source
+        Object.keys(serverState).forEach(k => {
+          if (Array.isArray(serverState[k])) {
+            state[k] = serverState[k];
           }
         });
-        try { render(); } catch (e) {}
+        // Cache to IndexedDB for offline fallback
+        saveStateToDB(state);
+        console.log(`[SQLite] Loaded ${serverRecs} records from server`);
       }
     }
+    try { render(); } catch (e) {}
     updateDatabaseMetricsUI();
+  }).catch(e => {
+    // Server offline — fall back to IndexedDB
+    _serverOnline = false;
+    console.log('[SQLite] Server not available, using local data. Reason:', e.message);
+    loadStateFromDB().then(dbData => {
+      if (dbData && typeof dbData === 'object') {
+        const dbRecs = (dbData.invoices || []).length + (dbData.inventory || []).length;
+        const curRecs = (state.invoices || []).length + (state.inventory || []).length;
+        if (dbRecs >= curRecs) {
+          Object.keys(dbData).forEach(k => {
+            if (Array.isArray(dbData[k])) {
+              state[k] = dbData[k];
+            }
+          });
+          try { render(); } catch (e) {}
+        }
+      }
+      showOfflineBanner();
+      updateDatabaseMetricsUI();
+    });
   });
 }
 
@@ -931,17 +1129,22 @@ function render() {
 
     const btrInvEl = $('#battery-inventory-table');
     if (btrInvEl) {
-      btrInvEl.innerHTML = finishedPacks.length > 0 ? finishedPacks.map(p => `
-        <tr>
-          <td><strong>${p.serial === '—' ? p.id : p.serial}</strong></td>
-          <td>${p.model}</td>
-          <td>${p.operator}</td>
-          <td>${p.built}</td>
-          <td>${badge(p.qc)}</td>
-          <td><strong>${badge(p.status)}</strong></td>
-          <td>Finished Goods Rack A1</td>
-        </tr>
-      `).join('') : '<tr><td colspan="7" style="text-align:center;color:#a0aec0;">No finished battery packs in stock yet. Complete production QC to populate battery inventory.</td></tr>';
+      btrInvEl.innerHTML = finishedPacks.length > 0 ? finishedPacks.map(p => {
+        const serial = p.serial === '—' ? p.id : p.serial;
+        return `
+          <tr>
+            <td><strong>${serial}</strong></td>
+            <td>${p.model}</td>
+            <td>${p.operator}</td>
+            <td>${p.built}</td>
+            <td>${badge(p.qc)}</td>
+            <td><strong>${badge(p.status)}</strong></td>
+            <td>
+              <button class="secondary-btn btn-view-pack-qr" data-serial="${serial}" style="padding:3px 8px;font-size:11px;background:#ebf8ff;color:#2b6cb0;font-weight:700;">🖨️ QR Label</button>
+            </td>
+          </tr>
+        `;
+      }).join('') : '<tr><td colspan="7" style="text-align:center;color:#a0aec0;">No finished battery packs in stock yet. Complete production QC to populate battery inventory.</td></tr>';
     }
 
     // Inventory Table with Assigned vs Unassigned GST filter
@@ -1001,16 +1204,33 @@ function render() {
       }).join('');
     }
 
-    // Populate QR Label Pack Selector
+    // Populate QR Label Pack Selector with all available packs (Warranties + Production)
     const qrSelect = $('#qr-pack-select');
     if (qrSelect) {
-      qrSelect.innerHTML = (state.warranties || []).length > 0
-        ? (state.warranties || []).map(w => `<option value="${w.pack}">${w.pack} — ${w.customer} (Ends: ${w.end})</option>`).join('')
-        : '<option value="">No activated warranty packs registered yet</option>';
+      const allPacks = [];
+      (state.warranties || []).forEach(w => allPacks.push({ serial: w.pack, label: `${w.pack} — ${w.customer} (Warranty Active)` }));
+      (state.production || []).forEach(p => {
+        const serial = (p.serial && p.serial !== '—') ? p.serial : p.id;
+        if (!allPacks.some(ap => ap.serial === serial)) {
+          allPacks.push({ serial, label: `${serial} — ${p.model} (${p.status})` });
+        }
+      });
+
+      const currentSel = qrSelect.value;
+      qrSelect.innerHTML = allPacks.length > 0
+        ? allPacks.map(p => `<option value="${p.serial}" ${p.serial === currentSel ? 'selected' : ''}>${p.label}</option>`).join('')
+        : '<option value="">No battery packs available</option>';
+
+      if (currentSel && allPacks.some(p => p.serial === currentSel)) {
+        qrSelect.value = currentSel;
+      }
     }
 
-    if ($('#qr-label-preview-container') && (state.warranties || []).length > 0) {
-      renderQrLabelPreview(qrSelect?.value || state.warranties[0].pack);
+    if ($('#qr-label-preview-container')) {
+      const activeSerial = qrSelect?.value || (state.warranties[0]?.pack) || (state.production[0]?.serial);
+      if (activeSerial && activeSerial !== '—') {
+        renderQrLabelPreview(activeSerial);
+      }
     }
 
     // Dashboard Party Ledger Receivables & Stat Calculations
@@ -1068,7 +1288,10 @@ function render() {
             <td>${inv.date}</td>
             <td>${badge(warrantyBadgeText)}</td>
             <td>
-              <button class="primary-btn btn-print-hk-invoice" data-invoice="${inv.invoice}" style="padding:4px 8px;font-size:11px;background:#1769AA;">🖨️ HK Motors Invoice</button>
+              <div style="display:flex;gap:4px;">
+                <button class="primary-btn btn-print-hk-invoice" data-invoice="${inv.invoice}" style="padding:4px 8px;font-size:11px;background:#1769AA;">🖨️ HK Invoice</button>
+                ${inv.warrantyStatus !== 'Cancelled' ? `<button class="secondary-btn btn-cancel-sale-invoice" data-invoice="${inv.invoice}" style="padding:4px 8px;font-size:11px;background:#fff1f0;color:#c53030;border:1px solid #ffa39e;">❌ Cancel</button>` : ''}
+              </div>
             </td>
           </tr>
         `;
@@ -1367,6 +1590,161 @@ function downloadSalesCSV() {
   downloadRowsCSV(rows, `Lithynova_Sales_Register_${new Date().toISOString().split('T')[0]}.csv`);
 }
 
+function downloadPartyLedgerCSV(partyName) {
+  if (!partyName) {
+    toast('Please select a party first.');
+    return;
+  }
+  const partyKey = normalizeText(partyName);
+  const entries = [...(state.ledger || []).filter(l => normalizeText(l.party) === partyKey)].reverse();
+
+  if (entries.length === 0) {
+    toast(`No ledger entries found for ${partyName}.`);
+    return;
+  }
+
+  const rows = [
+    ['Date', 'Reference', 'Description', 'Debit (INR)', 'Credit (INR)', 'Running Balance (INR)', 'Payment Mode / Bank Account']
+  ];
+
+  let balance = 0;
+  entries.forEach(e => {
+    balance += ((e.debit || 0) - (e.credit || 0));
+    rows.push([
+      e.date || '',
+      e.ref || '',
+      e.desc || '',
+      e.debit || 0,
+      e.credit || 0,
+      roundMoney(balance),
+      e.bankAccount || ''
+    ]);
+  });
+
+  downloadRowsCSV(rows, `${partyName.replace(/[^a-zA-Z0-9]/g, '_')}_Ledger_Statement.csv`);
+}
+
+function downloadSupplierLedgerCSV(suppName) {
+  if (!suppName) {
+    toast('Please select a supplier first.');
+    return;
+  }
+  const suppKey = normalizeText(suppName);
+  const entries = [...(state.supplierLedger || []).filter(l => normalizeText(l.supplier) === suppKey)].reverse();
+
+  if (entries.length === 0) {
+    toast(`No purchase ledger entries found for ${suppName}.`);
+    return;
+  }
+
+  const rows = [
+    ['Date', 'Bill/Ref No', 'Description', 'Debit (INR Paid)', 'Credit (INR Bill)', 'Running Balance (INR)', 'Bank Account / Mode']
+  ];
+
+  let balance = 0;
+  entries.forEach(e => {
+    balance += ((e.credit || 0) - (e.debit || 0));
+    rows.push([
+      e.date || '',
+      e.ref || '',
+      e.desc || '',
+      e.debit || 0,
+      e.credit || 0,
+      roundMoney(balance),
+      e.bankAccount || ''
+    ]);
+  });
+
+  downloadRowsCSV(rows, `${suppName.replace(/[^a-zA-Z0-9]/g, '_')}_Supplier_Ledger.csv`);
+}
+
+function openCreditNoteModal(preferredParty = '') {
+  const backdrop = $('#modal-backdrop');
+  if (!backdrop) return;
+  const partyList = Array.from(new Set([
+    ...(state.dealers || []).map(d => d.name),
+    ...(state.invoices || []).map(i => i.party),
+    ...(state.ledger || []).map(l => l.party)
+  ])).filter(Boolean);
+
+  const selectedParty = preferredParty || partyList[0] || '';
+  const unpaidInvoices = (state.invoices || []).filter(i => normalizeText(i.party) === normalizeText(selectedParty) && i.balanceAmount > 0);
+  const invoiceOptions = unpaidInvoices.map(i => `<option value="${i.invoice}">${i.invoice} (Bal: ₹${i.balanceAmount})</option>`).join('');
+
+  $('#modal-title').textContent = `Issue Credit Note — ${selectedParty || 'Select Party'}`;
+  $('#modal-fields').innerHTML = `
+    <div class="form-grid">
+      <div class="field full"><label style="font-weight:700;">Party Name *</label>
+        <select name="party" id="cn-party-select">${partyList.map(p => `<option value="${p}" ${p === selectedParty ? 'selected' : ''}>${p}</option>`).join('')}</select>
+      </div>
+      <div class="field"><label style="font-weight:700;">Link to Invoice (Optional)</label>
+        <select name="invoice"><option value="">— None / Direct Credit —</option>${invoiceOptions}</select>
+      </div>
+      <div class="field"><label style="font-weight:700;">Credit Note Date *</label><input name="date" type="date" value="${new Date().toISOString().split('T')[0]}" required /></div>
+      <div class="field"><label style="font-weight:700;">Credit Amount (₹) *</label><input name="amount" type="number" step="0.01" value="1000" required style="font-weight:800;color:#2b6cb0;" /></div>
+      <div class="field full"><label style="font-weight:700;">Reason for Credit Note *</label><input name="reason" placeholder="Goods return / Price difference / Volume discount" required /></div>
+    </div>
+  `;
+  backdrop.removeAttribute('hidden');
+  backdrop.style.display = 'grid';
+  backdrop.dataset.kind = 'credit-note';
+}
+
+function openDebitNoteModal(preferredParty = '') {
+  const backdrop = $('#modal-backdrop');
+  if (!backdrop) return;
+  const partyList = Array.from(new Set([
+    ...(state.dealers || []).map(d => d.name),
+    ...(state.invoices || []).map(i => i.party),
+    ...(state.ledger || []).map(l => l.party)
+  ])).filter(Boolean);
+
+  const selectedParty = preferredParty || partyList[0] || '';
+
+  $('#modal-title').textContent = `Issue Debit Note — ${selectedParty || 'Select Party'}`;
+  $('#modal-fields').innerHTML = `
+    <div class="form-grid">
+      <div class="field full"><label style="font-weight:700;">Party Name *</label>
+        <select name="party">${partyList.map(p => `<option value="${p}" ${p === selectedParty ? 'selected' : ''}>${p}</option>`).join('')}</select>
+      </div>
+      <div class="field"><label style="font-weight:700;">Debit Note Date *</label><input name="date" type="date" value="${new Date().toISOString().split('T')[0]}" required /></div>
+      <div class="field"><label style="font-weight:700;">Debit Amount (₹) *</label><input name="amount" type="number" step="0.01" value="1000" required style="font-weight:800;color:#c53030;" /></div>
+      <div class="field full"><label style="font-weight:700;">Reason for Debit Note *</label><input name="reason" placeholder="Late payment charge / Extra freight / Interest charge" required /></div>
+    </div>
+  `;
+  backdrop.removeAttribute('hidden');
+  backdrop.style.display = 'grid';
+  backdrop.dataset.kind = 'debit-note';
+}
+
+function openOpeningBalanceModal(preferredParty = '') {
+  const backdrop = $('#modal-backdrop');
+  if (!backdrop) return;
+  const partyList = Array.from(new Set([
+    ...(state.dealers || []).map(d => d.name),
+    ...(state.invoices || []).map(i => i.party),
+    ...(state.ledger || []).map(l => l.party)
+  ])).filter(Boolean);
+
+  const selectedParty = preferredParty || partyList[0] || '';
+
+  $('#modal-title').textContent = `Set Opening Balance — ${selectedParty || 'Select Party'}`;
+  $('#modal-fields').innerHTML = `
+    <div class="form-grid">
+      <div class="field full"><label style="font-weight:700;">Party Name *</label>
+        <select name="party">${partyList.map(p => `<option value="${p}" ${p === selectedParty ? 'selected' : ''}>${p}</option>`).join('')}</select>
+      </div>
+      <div class="field"><label style="font-weight:700;">Balance Type *</label>
+        <select name="balType"><option value="Debit">Debit (Party owes us money)</option><option value="Credit">Credit (We owe party / Advance)</option></select>
+      </div>
+      <div class="field"><label style="font-weight:700;">Opening Balance Amount (₹) *</label><input name="amount" type="number" step="0.01" value="0" required style="font-weight:800;" /></div>
+    </div>
+  `;
+  backdrop.removeAttribute('hidden');
+  backdrop.style.display = 'grid';
+  backdrop.dataset.kind = 'opening-balance';
+}
+
 function getCompanyBankAccounts() {
   const customBankAccs = (state.bankAccounts || []).map(b => `${b.bankName} — ${b.accType} (${b.accNo})`);
   if (customBankAccs.length === 0) {
@@ -1481,6 +1859,13 @@ function showView(view) {
   }
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function switchSubTab(parentViewId, targetTabId) {
+  const parentView = $(`#${parentViewId}`);
+  if (!parentView) return;
+  $$('.tab', parentView).forEach(t => t.classList.toggle('active', t.dataset.tab === targetTabId));
+  $$('.tab-content', parentView).forEach(c => c.classList.toggle('active', c.id === targetTabId));
 }
 
 function toast(msg) {
@@ -1865,13 +2250,80 @@ function runQcModal(prodIdx) {
 
 function drawQRCodeCanvas(canvasEl, text) {
   if (!canvasEl) return;
-  try {
-    if (typeof QRCode !== 'undefined' && QRCode.drawCanvas) {
-      QRCode.drawCanvas(canvasEl, String(text || ''), 120);
-      return;
+  const size = 120;
+  canvasEl.width = size;
+  canvasEl.height = size;
+  const cleanText = String(text || '').trim();
+
+  if (typeof QRCode !== 'undefined') {
+    for (let tNum = 0; tNum <= 10; tNum++) {
+      try {
+        const qr = new QRCode(tNum, 0);
+        qr.addData(cleanText);
+        qr.make();
+
+        const count = qr.getModuleCount();
+        const ctx = canvasEl.getContext('2d');
+        const cellSize = size / count;
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, size, size);
+
+        ctx.fillStyle = '#000000';
+        for (let r = 0; r < count; r++) {
+          for (let c = 0; c < count; c++) {
+            if (qr.isDark(r, c)) {
+              ctx.fillRect(Math.floor(c * cellSize), Math.floor(r * cellSize), Math.ceil(cellSize), Math.ceil(cellSize));
+            }
+          }
+        }
+        return;
+      } catch (e) {
+        // Try next type number if length overflowed
+      }
     }
-  } catch (e) {
-    console.warn('QRCode library draw failed:', e);
+  }
+
+  try {
+    const ctx = canvasEl.getContext('2d');
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = '#000000';
+    
+    const grid = 25;
+    const cell = size / grid;
+    
+    function drawFinderPattern(row, col) {
+      for (let r = 0; r < 7; r++) {
+        for (let c = 0; c < 7; c++) {
+          if (r === 0 || r === 6 || c === 0 || c === 6 || (r >= 2 && r <= 4 && c >= 2 && c <= 4)) {
+            ctx.fillRect((col + c) * cell, (row + r) * cell, cell, cell);
+          }
+        }
+      }
+    }
+
+    drawFinderPattern(0, 0);
+    drawFinderPattern(0, grid - 7);
+    drawFinderPattern(grid - 7, 0);
+
+    let hash = 0;
+    for (let i = 0; i < cleanText.length; i++) {
+      hash = ((hash << 5) - hash) + cleanText.charCodeAt(i);
+      hash |= 0;
+    }
+
+    for (let r = 0; r < grid; r++) {
+      for (let c = 0; c < grid; c++) {
+        const inFinder = (r < 8 && c < 8) || (r < 8 && c >= grid - 8) || (r >= grid - 8 && c < 8);
+        if (!inFinder) {
+          const bit = Math.abs((hash ^ (r * 31 + c * 17)) % 3) === 0;
+          if (bit) ctx.fillRect(c * cell, r * cell, cell, cell);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('QR Canvas fallback notice:', err);
   }
 }
 
@@ -1879,10 +2331,14 @@ function renderQrLabelPreview(packSerial) {
   const container = $('#qr-label-preview-container');
   if (!container) return;
 
-  const warranty = state.warranties.find(w => w.pack === packSerial) || state.warranties[0];
-  const pack = warranty ? warranty.pack : 'BAT-2026-000046';
-  const customer = warranty ? warranty.customer : 'Bharat S Gadhvi';
-  const end = warranty ? warranty.end : '23 July 2028';
+  const warranty = (state.warranties || []).find(w => w.pack === packSerial);
+  const prodPack = (state.production || []).find(p => p.serial === packSerial || p.id === packSerial);
+  const salePack = (state.sales || []).find(s => s.pack === packSerial);
+
+  const pack = packSerial || (warranty ? warranty.pack : prodPack ? (prodPack.serial && prodPack.serial !== '—' ? prodPack.serial : prodPack.id) : (state.warranties[0]?.pack || 'BAT-2026-000048'));
+  const customer = warranty ? warranty.customer : (salePack ? salePack.party : prodPack ? `Factory Stock (${prodPack.model})` : 'Lithynova Factory Stock');
+  const end = warranty ? warranty.end : 'Warranty Pending Registration';
+  const statusText = warranty ? warranty.status : prodPack ? prodPack.status : 'Saleable';
   const targetUrl = `${window.location.origin}${window.location.pathname}?token=${pack}`;
 
   container.innerHTML = `
@@ -1892,10 +2348,10 @@ function renderQrLabelPreview(packSerial) {
           <img src="lithynova_logo.png" alt="Lithynova" style="width:48px;height:48px;object-fit:contain;border-radius:6px;background:#fff;padding:2px;border:1px solid #cbd5e0;" />
           <div>
             <div style="font-weight:900;font-size:16px;letter-spacing:1px;color:#1a202c;">LITHYNOVA BATTERY SYSTEM</div>
-            <div style="font-size:10px;color:#718096;text-transform:uppercase;font-weight:700;">Official Warranty Verification Sticker</div>
+            <div style="font-size:10px;color:#718096;text-transform:uppercase;font-weight:700;">Official Verification Sticker</div>
           </div>
         </div>
-        <div style="background:#f0fff4;color:#2f855a;font-weight:800;font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #c6f6d5;">WARRANTY ACTIVE</div>
+        <div style="background:#f0fff4;color:#2f855a;font-weight:800;font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #c6f6d5;">${statusText.toUpperCase()}</div>
       </div>
 
       <div style="display:flex;gap:16px;align-items:center;">
@@ -1912,12 +2368,12 @@ function renderQrLabelPreview(packSerial) {
           </div>
 
           <div style="margin-bottom:6px;">
-            <span style="font-size:10px;color:#718096;display:block;">REGISTERED OWNER / CUSTOMER</span>
+            <span style="font-size:10px;color:#718096;display:block;">REGISTERED OWNER / STOCK</span>
             <strong style="color:#2b6cb0;">${customer}</strong>
           </div>
 
           <div>
-            <span style="font-size:10px;color:#718096;display:block;">WARRANTY EXPIRY DATE</span>
+            <span style="font-size:10px;color:#718096;display:block;">WARRANTY STATUS / EXPIRY</span>
             <strong style="color:#2f855a;font-size:14px;">${end}</strong>
           </div>
         </div>
@@ -3988,6 +4444,17 @@ function submitModal(e) {
     const todayStr = data.credit_date || new Date().toISOString().split('T')[0];
     const isDealer = (state.dealers || []).some(d => normalizeText(d.name) === normalizeText(party));
 
+    // Fix #2 & #10: FIFO Payment Allocation across unpaid invoices for party
+    allocatePaymentToPartyInvoices(party, amount);
+
+    const partyKey = normalizeText(party);
+    let partyDebit = 0;
+    let partyCredit = 0;
+    state.ledger.filter(l => normalizeText(l.party) === partyKey).forEach(l => {
+      partyDebit += (l.debit || 0);
+      partyCredit += (l.credit || 0);
+    });
+
     state.ledger.unshift({
       id: 'LEDG-P-' + Date.now().toString().slice(-4),
       date: todayStr,
@@ -3997,7 +4464,7 @@ function submitModal(e) {
       desc: `Payment Received via ${bankAccount} (${data.credit_notes || 'Credit'})`,
       debit: 0.00,
       credit: amount,
-      balance: 0.00,
+      balance: roundMoney((partyDebit - partyCredit) - amount),
       bankAccount
     });
 
@@ -4021,7 +4488,126 @@ function submitModal(e) {
     }
 
     closeModal();
-    toast(`Recorded payment credit of ₹${amount.toLocaleString('en-IN')} for ${party}`);
+    toast(`Recorded payment credit of ₹${amount.toLocaleString('en-IN')} for ${party} (allocated to invoices)`);
+  }
+
+  if (kind === 'credit-note') {
+    const party = data.party;
+    const amount = Number(data.amount || 0);
+    if (!party || amount <= 0) {
+      toast('Please select a party and enter a valid credit amount.');
+      return;
+    }
+    const todayStr = data.date || new Date().toISOString().split('T')[0];
+    const cnNo = 'CN-' + Date.now().toString().slice(-6);
+
+    if (data.invoice) {
+      const inv = (state.invoices || []).find(i => i.invoice === data.invoice);
+      if (inv) {
+        const apply = Math.min(amount, inv.balanceAmount);
+        inv.paidAmount = roundMoney(inv.paidAmount + apply);
+        inv.balanceAmount = roundMoney(inv.balanceAmount - apply);
+      }
+    }
+
+    const partyKey = normalizeText(party);
+    let partyDebit = 0;
+    let partyCredit = 0;
+    state.ledger.filter(l => normalizeText(l.party) === partyKey).forEach(l => {
+      partyDebit += (l.debit || 0);
+      partyCredit += (l.credit || 0);
+    });
+
+    const isDealer = (state.dealers || []).some(d => normalizeText(d.name) === partyKey);
+    state.ledger.unshift({
+      id: 'LEDG-CN-' + Date.now().toString().slice(-4),
+      date: todayStr,
+      party: party,
+      partyType: isDealer ? 'Dealer' : 'Customer',
+      ref: cnNo,
+      desc: `Credit Note: ${data.reason}${data.invoice ? ` (Invoice ${data.invoice})` : ''}`,
+      debit: 0.00,
+      credit: amount,
+      balance: roundMoney((partyDebit - partyCredit) - amount),
+      bankAccount: 'Credit Note'
+    });
+
+    saveState();
+    render();
+    closeModal();
+    toast(`Issued Credit Note ${cnNo} of ₹${amount.toLocaleString('en-IN')} for ${party}`);
+  }
+
+  if (kind === 'debit-note') {
+    const party = data.party;
+    const amount = Number(data.amount || 0);
+    if (!party || amount <= 0) {
+      toast('Please select a party and enter a valid debit amount.');
+      return;
+    }
+    const todayStr = data.date || new Date().toISOString().split('T')[0];
+    const dnNo = 'DN-' + Date.now().toString().slice(-6);
+
+    const partyKey = normalizeText(party);
+    let partyDebit = 0;
+    let partyCredit = 0;
+    state.ledger.filter(l => normalizeText(l.party) === partyKey).forEach(l => {
+      partyDebit += (l.debit || 0);
+      partyCredit += (l.credit || 0);
+    });
+
+    const isDealer = (state.dealers || []).some(d => normalizeText(d.name) === partyKey);
+    state.ledger.unshift({
+      id: 'LEDG-DN-' + Date.now().toString().slice(-4),
+      date: todayStr,
+      party: party,
+      partyType: isDealer ? 'Dealer' : 'Customer',
+      ref: dnNo,
+      desc: `Debit Note: ${data.reason}`,
+      debit: amount,
+      credit: 0.00,
+      balance: roundMoney((partyDebit - partyCredit) + amount),
+      bankAccount: 'Debit Note'
+    });
+
+    saveState();
+    render();
+    closeModal();
+    toast(`Issued Debit Note ${dnNo} of ₹${amount.toLocaleString('en-IN')} for ${party}`);
+  }
+
+  if (kind === 'opening-balance') {
+    const party = data.party;
+    const amount = Number(data.amount || 0);
+    if (!party || amount === 0) {
+      toast('Please select a party and enter a non-zero opening balance.');
+      return;
+    }
+    const isDebit = data.balType === 'Debit';
+    const debit = isDebit ? amount : 0;
+    const credit = isDebit ? 0 : amount;
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const partyKey = normalizeText(party);
+    const isDealer = (state.dealers || []).some(d => normalizeText(d.name) === partyKey);
+
+    state.ledger.unshift({
+      id: 'LEDG-OB-' + Date.now().toString().slice(-4),
+      date: todayStr,
+      party: party,
+      partyType: isDealer ? 'Dealer' : 'Customer',
+      ref: 'OPENING-BAL',
+      desc: `Opening Balance (${data.balType})`,
+      debit: debit,
+      credit: credit,
+      balance: isDebit ? debit : -credit,
+      bankAccount: 'Opening Balance'
+    });
+
+    saveState();
+    render();
+    closeModal();
+    toast(`Set Opening Balance of ₹${amount.toLocaleString('en-IN')} (${data.balType}) for ${party}`);
   }
 
   if (kind === 'run-qc') {
@@ -4032,9 +4618,20 @@ function submitModal(e) {
       state.production[idx].serial = data.serial;
       state.production[idx].status = isPassed ? 'Saleable' : 'QC failed';
 
+      saveState();
       render();
-      showView('production');
-      toast(isPassed ? `QC Passed! Pack ${data.serial} released to Finished Stock Inventory.` : `Production ${state.production[idx].id} marked QC Failed.`);
+      closeModal();
+
+      if (isPassed && data.serial && data.serial !== '—') {
+        showView('lookup');
+        const qrSelect = $('#qr-pack-select');
+        if (qrSelect) qrSelect.value = data.serial;
+        renderQrLabelPreview(data.serial);
+        toast(`⚡ QC Passed! Pack ${data.serial} released & QR Label generated!`);
+      } else {
+        showView('production');
+        toast(`Production ${state.production[idx].id} marked QC Failed.`);
+      }
     }
   }
 
@@ -4062,9 +4659,15 @@ function submitModal(e) {
       status: data.status || 'Active'
     });
 
+    saveState();
     render();
-    showView('warranty');
-    toast(`Activated warranty for ${serial} until ${endStr}`);
+    closeModal();
+
+    showView('lookup');
+    const qrSelect = $('#qr-pack-select');
+    if (qrSelect) qrSelect.value = serial;
+    renderQrLabelPreview(serial);
+    toast(`Activated warranty for ${serial} until ${endStr} — QR Label ready!`);
   }
 
   if (kind === 'issue-replacement') {
@@ -5043,11 +5646,22 @@ function openVehicleSaleModal(chassisIdx = null) {
 
 function bind() {
   closeModal();
-  try {
-    loadState();
-  } catch (e) {
-    console.warn('loadState notice:', e);
-  }
+
+  // Check for SQLite backend and auto-migrate if needed
+  checkAndMigrate().then(() => {
+    try {
+      loadState();
+    } catch (e) {
+      console.warn('loadState notice:', e);
+    }
+  }).catch(() => {
+    // Server not available, load from local storage
+    try {
+      loadState();
+    } catch (e) {
+      console.warn('loadState notice:', e);
+    }
+  });
 
   // Document-level event delegation for modals, navigation & actions (BOUND FIRST)
   document.addEventListener('click', (e) => {
@@ -5086,10 +5700,15 @@ function bind() {
     if (viewDlrBtn) {
       e.preventDefault();
       const dlrName = viewDlrBtn.dataset.dealer;
+      showView('sales');
+      switchSubTab('view-sales', 'dealer-ledger-tab');
       const dlrSelect = $('#dealer-statement-select');
       if (dlrSelect) {
         dlrSelect.value = dlrName;
         renderDealerStatement();
+        setTimeout(() => {
+          $('#dealer-statement-title')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 50);
       }
       return;
     }
@@ -5123,6 +5742,17 @@ function bind() {
       return;
     }
 
+    const viewPackQrBtn = e.target.closest('.btn-view-pack-qr');
+    if (viewPackQrBtn) {
+      e.preventDefault();
+      const serial = viewPackQrBtn.dataset.serial;
+      showView('lookup');
+      const qrSelect = $('#qr-pack-select');
+      if (qrSelect) qrSelect.value = serial;
+      renderQrLabelPreview(serial);
+      return;
+    }
+
     if (e.target.id === 'btn-print-ledger') {
       e.preventDefault();
       renderLedger();
@@ -5134,6 +5764,48 @@ function bind() {
       e.preventDefault();
       renderDealerStatement();
       setTimeout(() => window.print(), 0);
+      return;
+    }
+
+    const cancelInvBtn = e.target.closest('.btn-cancel-sale-invoice');
+    if (cancelInvBtn) {
+      e.preventDefault();
+      cancelSalesInvoice(cancelInvBtn.dataset.invoice);
+      return;
+    }
+
+    if (e.target.id === 'btn-add-credit-note' || e.target.id === 'btn-dealer-credit-note') {
+      e.preventDefault();
+      const party = $('#ledger-party-select')?.value || $('#dealer-statement-select')?.value || '';
+      openCreditNoteModal(party);
+      return;
+    }
+
+    if (e.target.id === 'btn-add-debit-note' || e.target.id === 'btn-dealer-debit-note') {
+      e.preventDefault();
+      const party = $('#ledger-party-select')?.value || $('#dealer-statement-select')?.value || '';
+      openDebitNoteModal(party);
+      return;
+    }
+
+    if (e.target.id === 'btn-add-opening-balance') {
+      e.preventDefault();
+      const party = $('#ledger-party-select')?.value || $('#dealer-statement-select')?.value || '';
+      openOpeningBalanceModal(party);
+      return;
+    }
+
+    if (e.target.id === 'btn-export-ledger-csv') {
+      e.preventDefault();
+      const party = $('#ledger-party-select')?.value || $('#dealer-statement-select')?.value || '';
+      downloadPartyLedgerCSV(party);
+      return;
+    }
+
+    if (e.target.id === 'btn-export-supp-ledger-csv') {
+      e.preventDefault();
+      const supp = $('#supplier-statement-select')?.value || '';
+      downloadSupplierLedgerCSV(supp);
       return;
     }
 
@@ -5247,12 +5919,13 @@ function bind() {
     if (viewSuppBtn) {
       e.preventDefault();
       const suppName = viewSuppBtn.dataset.supp;
+      showView('purchase-ledger');
+      switchSubTab('view-purchase-ledger', 'supplier-ledger-statement-tab');
       const suppSelect = $('#supplier-statement-select');
       if (suppSelect) {
         suppSelect.value = suppName;
         renderSupplierStatement();
       }
-      showView('purchase-ledger');
       return;
     }
 
@@ -5470,28 +6143,35 @@ function bind() {
     $('#input-restore-file')?.click();
   });
 
-  $('#btn-reset-factory-data')?.addEventListener('click', () => {
+  const handleDataReset = () => {
     if (!isUserAdmin()) {
-      toast('Access Denied: Only Administrators can reset factory data.');
+      toast('🔒 Access Denied: Only Administrators can perform factory data reset.');
       return;
     }
-    if (confirm('Are you sure you want to reset all local data to factory defaults?')) {
-      localStorage.removeItem('voltforge_state_v3');
-      window.location.reload();
+    const settings = getSystemSettings();
+    const correctPass = String(settings.adminPassword || 'ChangeMe123!').trim();
+    const inputPass = prompt('🔒 SECURITY GUARD: Enter Administrator Password to authorize Factory Reset:');
+    if (inputPass === null) return; // User cancelled
+    if (inputPass.trim() !== correctPass) {
+      toast('❌ Incorrect Administrator Password. Factory Reset aborted.');
+      return;
     }
-  });
+    if (confirm('⚠️ PERMANENT ACTION WARNING:\nAre you sure you want to reset ALL system records to factory clean state? This cannot be undone.')) {
+      localStorage.removeItem('voltforge_state_v3');
+      if (_serverOnline) {
+        fetch('/api/sync-state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': LITHYNOVA_API_KEY },
+          body: JSON.stringify({})
+        }).finally(() => window.location.reload());
+      } else {
+        window.location.reload();
+      }
+    }
+  };
 
-  // Reset App Data
-  $('#reset-app-btn')?.addEventListener('click', () => {
-    if (!isUserAdmin()) {
-      toast('Access Denied: Only Administrators can reset application data.');
-      return;
-    }
-    if (confirm('Are you sure you want to reset all local data to clean default factory state?')) {
-      localStorage.removeItem('voltforge_state_v3');
-      window.location.reload();
-    }
-  });
+  $('#btn-reset-factory-data')?.addEventListener('click', handleDataReset);
+  $('#reset-app-btn')?.addEventListener('click', handleDataReset);
 
   // Handle URL token parameter for direct smartphone camera QR scan
   const urlParams = new URLSearchParams(window.location.search);

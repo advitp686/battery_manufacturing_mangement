@@ -1,0 +1,29 @@
+{
+  "name": "lithynova-battery-management",
+  "version": "3.0.0",
+  "description": "Lithynova EV Battery Pack Management System - Production-Ready Web Application with SQLite Backend",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node server/server.js",
+    "serve-static": "npx -y serve web-preview -p 4173 -s",
+    "backup": "node server/backup.js"
+  },
+  "keywords": [
+    "battery-management",
+    "lithynova",
+    "ev-battery",
+    "inventory-control",
+    "tax-invoicing",
+    "qr-traceability",
+    "warranty-claims"
+  ],
+  "author": "HK MOTORS",
+  "license": "ISC",
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.0",
+    "express": "^4.21.0"
+  }
+}

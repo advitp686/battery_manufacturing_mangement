@@ -1,9 +1,0 @@
-<Application x:Class="BatteryManagement.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <Application.Resources>
-    <SolidColorBrush x:Key="Accent" Color="#1769AA" />
-    <Style TargetType="Button"><Setter Property="Margin" Value="4"/><Setter Property="Padding" Value="12,7"/><Setter Property="MinHeight" Value="32"/></Style>
-    <Style TargetType="TextBox"><Setter Property="Margin" Value="4"/><Setter Property="Padding" Value="6"/></Style>
-    <Style TargetType="ComboBox"><Setter Property="Margin" Value="4"/><Setter Property="Padding" Value="5"/></Style>
-    <Style TargetType="DataGrid"><Setter Property="Margin" Value="4"/><Setter Property="AutoGenerateColumns" Value="True"/><Setter Property="IsReadOnly" Value="True"/></Style>
-  </Application.Resources>
-</Application>

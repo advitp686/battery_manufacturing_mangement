@@ -42,7 +42,7 @@
         <button class="nav-item" data-view="settings"><span class="nav-icon">⚙</span> System Settings</button>
       </nav>
       <div class="sidebar-bottom">
-        <div class="sync-card"><div class="sync-dot"></div><div><strong>Local-first mode</strong><span>Sync queue is healthy</span></div></div>
+        <div class="sync-card"><div class="sync-dot" id="sidebar-sync-dot"></div><div><strong id="sidebar-sync-title">⚡ SQLite Connected</strong><span id="sidebar-sync-sub">Server database active</span></div></div>
         <div class="profile" id="sidebar-profile-card" style="cursor:pointer;" title="Click to switch profile"><div class="avatar" id="sidebar-avatar">AP</div><div><strong id="sidebar-username">Advit Pandey</strong><span id="sidebar-userrole">👨‍💼 Administrator</span></div><button class="ghost-icon" aria-label="Account menu">•••</button></div>
       </div>
     </aside>
@@ -528,6 +528,11 @@
                   </div>
                 </div>
                 <button class="primary-btn" id="btn-add-ledger-credit" style="width:100%;margin-top:14px;">＋ Record Payment Credit</button>
+                <div style="display:grid;grid-template-columns: 1fr 1fr;gap:6px;margin-top:8px;">
+                  <button class="secondary-btn" id="btn-add-credit-note" style="font-size:11px;padding:6px;background:#ebf8ff;color:#2b6cb0;font-weight:700;">＋ Credit Note</button>
+                  <button class="secondary-btn" id="btn-add-debit-note" style="font-size:11px;padding:6px;background:#fff5f5;color:#c53030;font-weight:700;">＋ Debit Note</button>
+                </div>
+                <button class="secondary-btn" id="btn-add-opening-balance" style="width:100%;margin-top:6px;font-size:11px;padding:6px;font-weight:700;">⚖️ Set Opening Balance</button>
               </article>
 
               <!-- Right Panel: Ledger Statement -->
@@ -537,7 +542,10 @@
                     <h2 style="font-size:15px;" id="ledger-title-party">Statement of Account</h2>
                     <p style="font-size:11px;" id="ledger-sub-party">Transaction debits, credits, and running balance</p>
                   </div>
-                  <button class="secondary-btn" id="btn-print-ledger">Print Statement</button>
+                  <div style="display:flex;gap:6px;">
+                    <button class="secondary-btn" id="btn-export-ledger-csv" style="font-size:11px;padding:4px 8px;">Export CSV</button>
+                    <button class="secondary-btn" id="btn-print-ledger" style="font-size:11px;padding:4px 8px;">Print Statement</button>
+                  </div>
                 </div>
                 <div class="table-scroll">
                   <table>
@@ -622,6 +630,10 @@
                   </div>
                 </div>
                 <button class="primary-btn" id="btn-dealer-add-credit" style="width:100%;margin-top:14px;background:#16a34a;">＋ Record Payment Credit</button>
+                <div style="display:grid;grid-template-columns: 1fr 1fr;gap:6px;margin-top:8px;">
+                  <button class="secondary-btn" id="btn-dealer-credit-note" style="font-size:11px;padding:6px;background:#ebf8ff;color:#2b6cb0;font-weight:700;">＋ Credit Note</button>
+                  <button class="secondary-btn" id="btn-dealer-debit-note" style="font-size:11px;padding:6px;background:#fff5f5;color:#c53030;font-weight:700;">＋ Debit Note</button>
+                </div>
               </article>
 
               <!-- Right: Dealer B2B Ledger Table -->
@@ -1152,7 +1164,7 @@
             <div style="background:#f8fafc;padding:16px;border-radius:10px;border:1px solid #cbd5e1;margin-bottom:18px;display:grid;grid-template-columns:1.2fr 1fr 1.2fr;gap:14px;">
               <div>
                 <small style="color:#64748b;font-weight:700;font-size:10px;display:block;text-transform:uppercase;">DATABASE STORAGE ENGINE</small>
-                <strong style="font-size:14px;color:#2b6cb0;" id="db-engine-type">IndexedDB Desktop DB (Unlimited Capacity)</strong>
+                <strong style="font-size:14px;color:#2b6cb0;" id="db-engine-type">Browser LocalStorage &amp; IndexedDB Engine</strong>
               </div>
               <div>
                 <small style="color:#64748b;font-weight:700;font-size:10px;display:block;text-transform:uppercase;">TOTAL SYSTEM RECORDS</small>

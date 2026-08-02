@@ -13,3 +13,6 @@ publish/
 .tools/
 installer/output/
 node_modules/
+server/.env
+data/
+backups/
