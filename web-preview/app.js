@@ -2509,7 +2509,7 @@ const modalSchemas = {
     title: 'Create production record',
     fields: [
       ['model', 'Battery model', 'select', ['LFP City 3.2kWh', 'LFP Cargo 5.1kWh', 'NMC Sprint 2.8kWh']],
-      ['operator', 'Operator', 'text', 'Advit Pandey'],
+      ['operator', 'Operator', 'text', 'Production Lead'],
       ['batch', 'Cell batch', 'select', ['CATL-LFP-280-07', 'NMC-21700-06']],
       ['quantity', 'Packs to build', 'number', '1'],
       ['notes', 'Assembly notes', 'textarea', '']
@@ -2568,10 +2568,10 @@ function updateUserRoleUI() {
   const switchBtnEl = $('#btn-switch-user-role');
   const resetBtnEl = $('#reset-app-btn');
 
-  if (nameEl) nameEl.textContent = isAdmin ? 'Advit Pandey' : 'Reception Staff';
+  if (nameEl) nameEl.textContent = isAdmin ? 'System Administrator' : 'Reception Staff';
   if (roleEl) roleEl.textContent = isAdmin ? '👨‍💼 Administrator' : '👤 Reception Staff';
-  if (avatarEl) avatarEl.textContent = isAdmin ? 'AP' : 'RS';
-  if (topAvatarEl) topAvatarEl.textContent = isAdmin ? 'AP' : 'RS';
+  if (avatarEl) avatarEl.textContent = isAdmin ? 'ADM' : 'RS';
+  if (topAvatarEl) topAvatarEl.textContent = isAdmin ? 'ADM' : 'RS';
   if (switchBtnEl) switchBtnEl.textContent = isAdmin ? '👨‍💼 Admin' : '👤 Reception Staff';
 
   $$('.nav-item').forEach(item => {
@@ -4999,7 +4999,7 @@ function printHkMotorsInvoice(invNo) {
   const companyTagline = settings.tagline || 'AUTHORISED OF DELTIC';
   const companyAddress = settings.address || 'SENDULI BENDULI, GAIGHAT, RUSTAMPUR, GORAKHPUR-273016';
   const companyPhone = settings.phone || '6393539066';
-  const companyEmail = settings.email || 'hkmotorsofficial@gmail.com';
+  const companyEmail = settings.email || 'support@lithynova.com';
   const companyGstin = settings.gstin || '09ANLPY7318P1ZT';
   const jurisdictionText = settings.jurisdiction || 'GORAKHPUR';
 

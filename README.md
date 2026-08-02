@@ -64,4 +64,4 @@ python -m http.server 4173 --directory web-preview
 ## 🤝 Support & Maintenance
 
 Developed for **HK MOTORS** (Electric Vehicle & Lithium Battery Systems).  
-For technical support or feature requests, contact: `hkmotorsofficial@gmail.com`
+For technical support or feature requests, contact: `support@lithynova.com`
