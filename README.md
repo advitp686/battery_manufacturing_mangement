@@ -8,19 +8,18 @@ Offline-first, production-ready Web Application for lithium battery manufacturin
 
 Launch the web application instantly on any computer using your preferred tool:
 
-### Option A: PowerShell Launcher (Windows)
-From the project root:
+### Option A: 1-Click Double-Click Launcher (Windows)
+Double-click **`start-app.bat`** in the extracted folder.
+*(Automatically installs dependencies on first run, starts server, and opens browser)*
+
+### Option B: PowerShell Launcher (Windows)
 ```powershell
 .\start-app.ps1
 ```
-Open **[http://localhost:4173](http://localhost:4173)** in your web browser.
 
-### Option B: Using Node / NPM
-From the project root:
+### Option C: Using Node / NPM
 ```bash
 npm start
-# or
-npm run dev
 ```
 
 ### Option C: Python HTTP Server
