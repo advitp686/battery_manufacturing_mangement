@@ -33,7 +33,7 @@ async function syncAllTables() {
     const results = [];
     for (const [table, sheetName] of Object.entries(TABLE_SHEET_MAP)) {
         try {
-            const rows = getAll(table);
+            const rows = await getAll(table);
             const response = await fetch(webhookUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

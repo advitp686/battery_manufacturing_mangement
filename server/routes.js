@@ -1,470 +1,338 @@
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
-const { db, getAll, getById, insert, update, remove, getTotalRecords, keysToCamel, keysToSnake } = require('./db');
+const { query, getAll, getById, insert, update, remove, withTransaction, getTotalRecords, keysToCamel, TABLES } = require('./db');
 
-// --- SPECIAL CASES ---
-
-// 1. GET /api/models - join with model_bom
-router.get('/api/models', (req, res) => {
-    try {
-        const models = getAll('models');
-        const allBom = db.prepare('SELECT * FROM model_bom').all();
-        models.forEach(m => {
-            m.bom = allBom.filter(b => b.model_code === m.code).map(keysToCamel);
-        });
-        res.json(models);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+const asyncRoute = handler => (req, res) => Promise.resolve(handler(req, res)).catch(error => {
+    console.error('API error:', error);
+    res.status(error.statusCode || 500).json({ error: error.message });
 });
+const badRequest = message => Object.assign(new Error(message), { statusCode: 400 });
 
-// 2. POST /api/models - extract bom array and insert
-router.post('/api/models', (req, res) => {
-    try {
-        const { bom, ...modelData } = req.body;
-        const insertModel = db.transaction(() => {
-            insert('models', modelData);
-            if (bom && bom.length) {
-                bom.forEach(b => insert('model_bom', { ...b, modelCode: modelData.code }));
-            }
-        });
-        insertModel();
-        res.status(201).json({ ...modelData, bom: bom || [] });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
+async function embeddedModels(client) {
+    const models = await getAll('models', client);
+    const bom = (await query('SELECT * FROM model_bom', [], client)).rows.map(keysToCamel);
+    return models.map(model => ({ ...model, bom: bom.filter(item => item.modelCode === model.code) }));
+}
+async function embeddedInvoices(client) {
+    const invoices = await getAll('invoices', client);
+    const items = (await query('SELECT * FROM invoice_items', [], client)).rows.map(keysToCamel);
+    return invoices.map(invoice => ({ ...invoice, items: items.filter(item => item.invoiceNo === invoice.invoice) }));
+}
+async function embeddedPurchaseBills(client) {
+    const bills = await getAll('purchase_bills', client);
+    const items = (await query('SELECT * FROM purchase_bill_items', [], client)).rows.map(keysToCamel);
+    return bills.map(bill => ({ ...bill, items: items.filter(item => item.billId === bill.id) }));
+}
 
-// 3. PUT /api/models/:code - replace BOM entries
-router.put('/api/models/:code', (req, res) => {
-    try {
-        const code = req.params.code;
-        const { bom, ...modelData } = req.body;
-        const updateModel = db.transaction(() => {
-            update('models', 'code', code, modelData);
-            if (bom) {
-                // Delete existing and insert new
-                db.prepare('DELETE FROM model_bom WHERE model_code = ?').run(code);
-                bom.forEach(b => insert('model_bom', { ...b, modelCode: code }));
-            }
-        });
-        updateModel();
-        res.json({ ...modelData, bom: bom || [] });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-router.delete('/api/models/:code', (req, res) => {
-    try {
-        remove('models', 'code', req.params.code);
-        res.status(204).end();
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// 4. GET /api/invoices - join with invoice_items
-router.get('/api/invoices', (req, res) => {
-    try {
-        const invoices = getAll('invoices');
-        const allItems = db.prepare('SELECT * FROM invoice_items').all();
-        invoices.forEach(inv => {
-            inv.items = allItems.filter(item => item.invoice_no === inv.invoice).map(keysToCamel);
-        });
-        res.json(invoices);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// 5. POST /api/invoices - extract items array and insert
-router.post('/api/invoices', (req, res) => {
-    try {
-        const { items, ...invoiceData } = req.body;
-        const insertInvoice = db.transaction(() => {
-            insert('invoices', invoiceData);
-            if (items && items.length) {
-                items.forEach(item => insert('invoice_items', { ...item, invoiceNo: invoiceData.invoice }));
-            }
-        });
-        insertInvoice();
-        res.status(201).json({ ...invoiceData, items: items || [] });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// 6. PUT /api/invoices/:invoice - replace items entries
-router.put('/api/invoices/:invoice', (req, res) => {
-    try {
-        const invoiceId = req.params.invoice;
-        const { items, ...invoiceData } = req.body;
-        const updateInvoice = db.transaction(() => {
-            update('invoices', 'invoice', invoiceId, invoiceData);
-            if (items) {
-                db.prepare('DELETE FROM invoice_items WHERE invoice_no = ?').run(invoiceId);
-                items.forEach(item => insert('invoice_items', { ...item, invoiceNo: invoiceId }));
-            }
-        });
-        updateInvoice();
-        res.json({ ...invoiceData, items: items || [] });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// 7. DELETE /api/invoices/:invoice - Cascade deletes items via FK
-router.delete('/api/invoices/:invoice', (req, res) => {
-    try {
-        remove('invoices', 'invoice', req.params.invoice);
-        res.status(204).end();
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-
-// 8. POST /api/migrate - Import whole state
-router.post('/api/migrate', (req, res) => {
-    try {
-        const state = req.body;
-        const tables = [
-            'components', 'inventory', 'production', 'dealers', 'sales',
-            'ledger', 'warranties', 'claims', 'suppliers', 'supplier_ledger',
-            'vehicle_models', 'vehicles', 'vehicle_invoices', 'bank_accounts'
-        ];
-
-        let counts = {};
-
-        const migrateTx = db.transaction(() => {
-            // Standard tables
-            for (const table of tables) {
-                if (state[table] && Array.isArray(state[table])) {
-                    // Clear existing
-                    db.prepare(`DELETE FROM ${table}`).run();
-                    state[table].forEach(item => insert(table, item));
-                    counts[table] = state[table].length;
-                }
-            }
-            
-            // Models and BOM
-            if (state.models && Array.isArray(state.models)) {
-                db.prepare('DELETE FROM model_bom').run();
-                db.prepare('DELETE FROM models').run();
-                let bomCount = 0;
-                state.models.forEach(model => {
-                    const { bom, ...modelData } = model;
-                    insert('models', modelData);
-                    if (bom && Array.isArray(bom)) {
-                        bom.forEach(b => {
-                            insert('model_bom', { ...b, modelCode: modelData.code });
-                            bomCount++;
-                        });
-                    }
-                });
-                counts.models = state.models.length;
-                counts.model_bom = bomCount;
-            }
-
-            // Invoices and Items
-            if (state.invoices && Array.isArray(state.invoices)) {
-                db.prepare('DELETE FROM invoice_items').run();
-                db.prepare('DELETE FROM invoices').run();
-                let itemCount = 0;
-                state.invoices.forEach(inv => {
-                    const { items, ...invData } = inv;
-                    insert('invoices', invData);
-                    if (items && Array.isArray(items)) {
-                        items.forEach(i => {
-                            insert('invoice_items', { ...i, invoiceNo: invData.invoice });
-                            itemCount++;
-                        });
-                    }
-                });
-                counts.invoices = state.invoices.length;
-                counts.invoice_items = itemCount;
-            }
-
-            // System Settings
-            if (state.settings && typeof state.settings === 'object') {
-                db.prepare('DELETE FROM system_settings').run();
-                const stmt = db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?)');
-                Object.entries(state.settings).forEach(([key, value]) => {
-                    stmt.run(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
-                });
-                counts.settings = Object.keys(state.settings).length;
-            }
-        });
-        
-        migrateTx();
-        res.json({ success: true, counts });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// 9. GET /api/settings - Return single object
-router.get('/api/settings', (req, res) => {
-    try {
-        const rows = db.prepare('SELECT * FROM system_settings').all();
-        const settings = {};
-        rows.forEach(row => {
-            try {
-                settings[row.key] = JSON.parse(row.value);
-            } catch (e) {
-                settings[row.key] = row.value;
-            }
-        });
-        res.json(settings);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// 10. PUT /api/settings - Upsert settings
-router.put('/api/settings', (req, res) => {
-    try {
-        const settings = req.body;
-        const updateSettingsTx = db.transaction(() => {
-            const stmt = db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
-            Object.entries(settings).forEach(([key, value]) => {
-                stmt.run(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
-            });
-        });
-        updateSettingsTx();
-        res.json(settings);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// 11. GET /api/health
-router.get('/api/health', (req, res) => {
-    try {
-        const recordsInfo = getTotalRecords();
-        res.json({
-            status: 'ok',
-            totalRecords: recordsInfo.total,
-            tables: recordsInfo.tables
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message, status: 'error' });
-    }
-});
-
-// 12. POST /api/backup
-router.post('/api/backup', (req, res) => {
-    try {
-        const { createBackup } = require('./backup');
-        const result = createBackup();
-        res.json(result);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// 13. POST /api/sync/backup-now
-router.post('/api/sync/backup-now', async (req, res) => {
-    try {
-        const { syncAllTables } = require('./sheetsSync');
-        const result = await syncAllTables();
-        res.json(result);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// 14. GET /api/sync/status
-router.get('/api/sync/status', (req, res) => {
-    try {
-        const logs = db.prepare('SELECT * FROM sync_log ORDER BY id DESC LIMIT 50').all();
-        res.json(logs.map(keysToCamel));
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// 15. POST /api/sync-state — Accept full state object from browser's saveState()
-// This mirrors the localStorage.setItem('voltforge_state_v3', JSON.stringify(state)) pattern
-router.post('/api/sync-state', (req, res) => {
-    try {
-        const state = req.body;
-        if (!state || typeof state !== 'object') {
-            return res.status(400).json({ error: 'Invalid state object' });
+router.get('/api/models', asyncRoute(async (req, res) => res.json(await embeddedModels())));
+router.post('/api/models', asyncRoute(async (req, res) => {
+    const { bom = [], ...model } = req.body || {};
+    if (!model.code || !model.name) throw badRequest('Model code and name are required');
+    await withTransaction(async client => {
+        await insert('models', model, client);
+        for (const item of bom) await insert('model_bom', { ...item, modelCode: model.code }, client);
+    });
+    res.status(201).json({ ...model, bom });
+}));
+router.put('/api/models/:code', asyncRoute(async (req, res) => {
+    const { bom, ...model } = req.body || {};
+    await withTransaction(async client => {
+        await update('models', 'code', req.params.code, model, client);
+        if (bom !== undefined) {
+            await query('DELETE FROM model_bom WHERE model_code = $1', [req.params.code], client);
+            for (const item of bom) await insert('model_bom', { ...item, modelCode: req.params.code }, client);
         }
+    });
+    res.json({ ...model, code: req.params.code, bom: bom || [] });
+}));
+router.delete('/api/models/:code', asyncRoute(async (req, res) => { await remove('models', 'code', req.params.code); res.status(204).end(); }));
 
-        // Map of state keys to { table, pk } — simple flat arrays
-        const simpleMap = {
-            components: { table: 'components', pk: 'id' },
-            inventory: { table: 'inventory', pk: 'batch' },
-            production: { table: 'production', pk: 'id' },
-            dealers: { table: 'dealers', pk: 'id' },
-            sales: { table: 'sales', pk: 'invoice' },
-            ledger: { table: 'ledger', pk: 'id' },
-            warranties: { table: 'warranties', pk: 'pack' },
-            claims: { table: 'claims', pk: 'claim' },
-            suppliers: { table: 'suppliers', pk: 'id' },
-            supplierLedger: { table: 'supplier_ledger', pk: 'id' },
-            vehicleModels: { table: 'vehicle_models', pk: 'id' },
-            vehicles: { table: 'vehicles', pk: 'chassis_no' },
-            vehicleInvoices: { table: 'vehicle_invoices', pk: 'invoice' },
-            bankAccounts: { table: 'bank_accounts', pk: 'id' }
-        };
+router.get('/api/invoices', asyncRoute(async (req, res) => res.json(await embeddedInvoices())));
+router.post('/api/invoices', asyncRoute(async (req, res) => {
+    const { items = [], ...invoice } = req.body || {};
+    if (!invoice.invoice) throw badRequest('Invoice number is required');
+    await withTransaction(async client => {
+        await insert('invoices', invoice, client);
+        for (const item of items) await insert('invoice_items', { ...item, invoiceNo: invoice.invoice }, client);
+    });
+    res.status(201).json({ ...invoice, items });
+}));
+router.put('/api/invoices/:invoice', asyncRoute(async (req, res) => {
+    const { items, ...invoice } = req.body || {};
+    await withTransaction(async client => {
+        await update('invoices', 'invoice', req.params.invoice, invoice, client);
+        if (items !== undefined) {
+            await query('DELETE FROM invoice_items WHERE invoice_no = $1', [req.params.invoice], client);
+            for (const item of items) await insert('invoice_items', { ...item, invoiceNo: req.params.invoice }, client);
+        }
+    });
+    res.json({ ...invoice, invoice: req.params.invoice, items: items || [] });
+}));
+router.delete('/api/invoices/:invoice', asyncRoute(async (req, res) => { await remove('invoices', 'invoice', req.params.invoice); res.status(204).end(); }));
 
-        const syncTx = db.transaction(() => {
-            // Sync simple entities — clear and re-insert
-            for (const [stateKey, { table }] of Object.entries(simpleMap)) {
-                if (state[stateKey] && Array.isArray(state[stateKey])) {
-                    db.prepare(`DELETE FROM ${table}`).run();
-                    state[stateKey].forEach(row => {
-                        try { insert(table, row); } catch (e) { /* skip bad rows */ }
-                    });
-                }
-            }
+const stateTableMap = {
+    components: 'components', inventory: 'inventory', production: 'production', dealers: 'dealers',
+    sales: 'sales', ledger: 'ledger', warranties: 'warranties', claims: 'claims', suppliers: 'suppliers',
+    supplierLedger: 'supplier_ledger', purchaseBills: 'purchase_bills', vehicleModels: 'vehicle_models',
+    vehicles: 'vehicles', vehicleInvoices: 'vehicle_invoices', bankAccounts: 'bank_accounts'
+};
+const allDataTables = ['invoice_items', 'model_bom', 'purchase_bill_items', ...Object.values(stateTableMap), 'invoices', 'models'];
 
-            // Models with embedded BOM
-            if (state.models && Array.isArray(state.models)) {
-                db.prepare('DELETE FROM model_bom').run();
-                db.prepare('DELETE FROM models').run();
-                state.models.forEach(model => {
-                    const { bom, ...modelData } = model;
-                    try {
-                        insert('models', modelData);
-                        if (bom && Array.isArray(bom)) {
-                            bom.forEach(b => {
-                                try { insert('model_bom', { ...b, modelCode: modelData.code }); } catch (e) {}
-                            });
-                        }
-                    } catch (e) { /* skip bad rows */ }
-                });
-            }
-
-            // Invoices with embedded items
-            if (state.invoices && Array.isArray(state.invoices)) {
-                db.prepare('DELETE FROM invoice_items').run();
-                db.prepare('DELETE FROM invoices').run();
-                state.invoices.forEach(inv => {
-                    const { items, ...invData } = inv;
-                    try {
-                        insert('invoices', invData);
-                        if (items && Array.isArray(items)) {
-                            items.forEach(item => {
-                                try { insert('invoice_items', { ...item, invoiceNo: invData.invoice }); } catch (e) {}
-                            });
-                        }
-                    } catch (e) { /* skip bad rows */ }
-                });
-            }
-        });
-
-        syncTx();
-        res.json({ success: true, timestamp: new Date().toISOString() });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+async function replaceState(state, client, { full = true } = {}) {
+    const writable = full ? new Set(allDataTables) : new Set(['sales', 'ledger', 'warranties', 'claims', 'invoices', 'invoice_items']);
+    for (const table of [...new Set(allDataTables)]) if (writable.has(table)) await query(`DELETE FROM "${table}"`, [], client);
+    for (const [key, table] of Object.entries(stateTableMap)) {
+        if (!writable.has(table)) continue;
+        if (state[key] === undefined) continue;
+        if (!Array.isArray(state[key])) throw badRequest(`${key} must be an array`);
+        for (const row of state[key]) {
+            if (table === 'purchase_bills') {
+                const { items = [], ...bill } = row; await insert(table, bill, client);
+                for (const item of items) await insert('purchase_bill_items', { ...item, billId: bill.id }, client);
+            } else await insert(table, row, client);
+        }
     }
-});
-
-// 16. GET /api/load-state — Return full state object matching browser's state structure
-router.get('/api/load-state', (req, res) => {
-    try {
-        // Simple entities
-        const stateObj = {
-            components: getAll('components'),
-            inventory: getAll('inventory'),
-            production: getAll('production'),
-            dealers: getAll('dealers'),
-            sales: getAll('sales'),
-            ledger: getAll('ledger'),
-            warranties: getAll('warranties'),
-            claims: getAll('claims'),
-            suppliers: getAll('suppliers'),
-            supplierLedger: getAll('supplier_ledger'),
-            vehicleModels: getAll('vehicle_models'),
-            vehicles: getAll('vehicles'),
-            vehicleInvoices: getAll('vehicle_invoices'),
-            bankAccounts: getAll('bank_accounts')
-        };
-
-        // Models with embedded BOM
-        const models = getAll('models');
-        const allBom = db.prepare('SELECT * FROM model_bom').all().map(keysToCamel);
-        models.forEach(m => {
-            m.bom = allBom.filter(b => b.modelCode === m.code);
-        });
-        stateObj.models = models;
-
-        // Invoices with embedded items
-        const invoices = getAll('invoices');
-        const allItems = db.prepare('SELECT * FROM invoice_items').all().map(keysToCamel);
-        invoices.forEach(inv => {
-            inv.items = allItems.filter(i => i.invoiceNo === inv.invoice);
-        });
-        stateObj.invoices = invoices;
-
-        res.json(stateObj);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+    if (full && state.models !== undefined) {
+        if (!Array.isArray(state.models)) throw badRequest('models must be an array');
+        for (const row of state.models) {
+            const { bom = [], ...model } = row;
+            if (!model.code) throw badRequest(`Model ${model.name || '(unnamed)'} is missing code`);
+            await insert('models', model, client);
+            for (const item of bom) await insert('model_bom', { ...item, modelCode: model.code }, client);
+        }
     }
-});
+    if (writable.has('invoices') && state.invoices !== undefined) {
+        if (!Array.isArray(state.invoices)) throw badRequest('invoices must be an array');
+        for (const row of state.invoices) {
+            const { items = [], ...invoice } = row; await insert('invoices', invoice, client);
+            for (const item of items) await insert('invoice_items', { ...item, invoiceNo: invoice.invoice }, client);
+        }
+    }
+    if (full && state.settings && typeof state.settings === 'object') {
+        await query('DELETE FROM system_settings', [], client);
+        for (const [key, value] of Object.entries(state.settings)) await insert('system_settings', { key, value: typeof value === 'object' ? JSON.stringify(value) : String(value) }, client);
+    }
+}
 
-// --- SIMPLE ENTITIES (REST PATTERNS) ---
+router.post('/api/migrate', asyncRoute(async (req, res) => {
+    if (!req.body || typeof req.body !== 'object') throw badRequest('Invalid state object');
+    await withTransaction(client => replaceState(req.body, client));
+    res.json({ success: true, timestamp: new Date().toISOString() });
+}));
+router.post('/api/sync-state', asyncRoute(async (req, res) => {
+    if (!req.body || typeof req.body !== 'object') throw badRequest('Invalid state object');
+    const result = await withTransaction(async client => {
+        const current = Number((await query("SELECT value FROM app_meta WHERE key = 'state_version'", [], client)).rows[0]?.value || 0);
+        const expected = req.body._syncVersion;
+        if ((expected === undefined && current > 0) || (expected !== undefined && Number(expected) !== current)) {
+            const error = new Error('State has changed on the server; reload before saving again'); error.statusCode = 409; error.currentVersion = current; throw error;
+        }
+        await replaceState(req.body, client, { full: req.session.user?.role === 'Admin' });
+        const next = current + 1;
+        await query("INSERT INTO app_meta(key,value) VALUES ('state_version',$1) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value", [String(next)], client);
+        return next;
+    });
+    res.json({ success: true, version: result, timestamp: new Date().toISOString() });
+}));
+router.post('/api/reset', asyncRoute(async (req, res) => {
+    await withTransaction(async client => { for (const table of [...new Set(allDataTables)]) await query(`DELETE FROM "${table}"`, [], client); await query('DELETE FROM system_settings', [], client); });
+    res.json({ success: true });
+}));
+
+function parseAvailable(value) {
+    const parts = String(value || '').split('/').map(part => Number(String(part).replace(/,/g, '').trim()));
+    return { available: Number.isFinite(parts[0]) ? parts[0] : 0, total: Number.isFinite(parts[1]) ? parts[1] : parts[0] || 0 };
+}
+function formatAvailable(available, total) { return `${available.toLocaleString()} / ${total.toLocaleString()}`; }
+function operationError(message, statusCode = 409) { return Object.assign(new Error(message), { statusCode }); }
+
+router.post('/api/operations/production', asyncRoute(async (req, res) => {
+    const data = req.body || {};
+    if (!data.model || !data.operator) throw badRequest('Model and operator are required');
+    const result = await withTransaction(async client => {
+        const model = (await query('SELECT * FROM models WHERE name = $1 LIMIT 1', [data.model], client)).rows[0];
+        if (!model) throw operationError(`Battery model not found: ${data.model}`, 422);
+        const bom = (await query('SELECT * FROM model_bom WHERE model_code = $1', [model.code], client)).rows;
+        const inventoryUpdates = [];
+        for (const item of bom) {
+            const inventory = (await query('SELECT * FROM inventory WHERE material = $1 FOR UPDATE', [item.name], client)).rows[0];
+            if (!inventory) throw operationError(`Required stock is missing: ${item.name}`, 422);
+            const parsed = parseAvailable(inventory.available);
+            const required = Number(item.qty) || 1;
+            if (parsed.available < required) throw operationError(`Insufficient stock for ${item.name}: required ${required}, available ${parsed.available}`, 422);
+            const remaining = parsed.available - required;
+            inventoryUpdates.push({ inventory, remaining, total: parsed.total });
+        }
+        const id = data.id || `PR-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+        const serial = data.serial && data.serial !== '—' ? data.serial : null;
+        await insert('production', { id, model: data.model, operator: data.operator, built: data.built || new Date().toISOString().slice(0, 10), qc: data.qc || 'Awaiting', serial, status: data.status || 'In QC' }, client);
+        for (const updateRow of inventoryUpdates) {
+            const health = updateRow.remaining / (updateRow.total || 1) < 0.25 ? 'Low' : 'Good';
+            await query('UPDATE inventory SET available = $1, health = $2 WHERE batch = $3', [formatAvailable(updateRow.remaining, updateRow.total), health, updateRow.inventory.batch], client);
+        }
+        return { id, serial };
+    });
+    res.status(201).json({ success: true, ...result });
+}));
+
+router.post('/api/operations/sale', asyncRoute(async (req, res) => {
+    const payload = req.body || {};
+    const invoice = payload.invoice || {};
+    const items = Array.isArray(invoice.items) ? invoice.items : [];
+    if (!invoice.invoice || !invoice.party || !items.length) throw badRequest('Invoice, party, and at least one item are required');
+    const serials = items.map(item => item.packSerial).filter(Boolean);
+    if (new Set(serials).size !== serials.length) throw operationError('A battery serial cannot appear twice on one invoice', 422);
+    await withTransaction(async client => {
+        for (const serial of serials) {
+            const production = (await query('SELECT * FROM production WHERE serial = $1 FOR UPDATE', [serial], client)).rows[0];
+            if (!production) throw operationError(`Battery serial not found: ${serial}`, 422);
+            if (['Sold (Retail)', 'Dispatched (Dealer)'].includes(production.status)) throw operationError(`Battery ${serial} has already been sold`, 409);
+            const existingSale = (await query('SELECT 1 FROM sales WHERE pack = $1 LIMIT 1', [serial], client)).rows[0];
+            if (existingSale) throw operationError(`Battery ${serial} already has a dispatch record`, 409);
+        }
+        const { items: ignoredItems, ...invoiceRow } = invoice;
+        await insert('invoices', invoiceRow, client);
+        for (const item of items) {
+            await insert('invoice_items', {
+                sr: item.sr, desc: item.desc || item.description, packSerial: item.packSerial || item.serial,
+                hsn: item.hsn, chassisVin: item.chassisVin, engineMotor: item.engineMotor, color: item.color,
+                keyController: item.keyController, wrcNo: item.wrcNo, chargerInfo: item.chargerInfo,
+                batteryInfo: item.batteryInfo, qty: item.qty, price: item.price ?? item.unitPrice, amount: item.amount,
+                invoiceNo: invoice.invoice
+            }, client);
+            if (item.packSerial) {
+                await insert('sales', { invoice: invoice.invoice, pack: item.packSerial, party: invoice.party, type: invoice.type, date: invoice.date, warranty: invoice.warrantyStatus, amount: item.amount, desc: item.desc || item.description }, client);
+                await query('UPDATE production SET status = $1 WHERE serial = $2', [invoice.type === 'Retail' ? 'Sold (Retail)' : 'Dispatched (Dealer)', item.packSerial], client);
+                const start = new Date(); if (invoice.type !== 'Retail') start.setMonth(start.getMonth() + 1);
+                const end = new Date(start); end.setFullYear(end.getFullYear() + 2);
+                await query('INSERT INTO warranties(pack,customer,registered,"end",status) VALUES($1,$2,$3,$4,$5) ON CONFLICT(pack) DO UPDATE SET customer=EXCLUDED.customer,registered=EXCLUDED.registered,"end"=EXCLUDED."end",status=EXCLUDED.status', [item.packSerial, invoice.type === 'Retail' ? invoice.party : `${invoice.party} (Dealer Auto)`, start.toISOString().slice(0, 10), end.toISOString().slice(0, 10), invoice.warrantyStatus || (invoice.type === 'Retail' ? 'Active (Same Day Auto)' : 'Dealer Auto (+1 Month)')], client);
+            }
+        }
+        const ledgerId = `LEDG-${crypto.randomUUID()}`;
+        await insert('ledger', { id: ledgerId, date: invoice.date, party: invoice.party, partyType: invoice.type, ref: invoice.invoice, desc: `Tax Invoice ${invoice.invoice} (${items.length} items)`, debit: invoice.grandTotal, credit: 0, balance: invoice.balanceAmount ?? invoice.grandTotal }, client);
+        if (Number(invoice.paidAmount) > 0) await insert('ledger', { id: `LEDG-${crypto.randomUUID()}`, date: invoice.date, party: invoice.party, partyType: invoice.type, ref: `PAY-${invoice.invoice}`, desc: `Upfront Payment Received for ${invoice.invoice}`, debit: 0, credit: invoice.paidAmount, balance: invoice.balanceAmount ?? 0 }, client);
+    });
+    res.status(201).json({ success: true, invoice: invoice.invoice });
+}));
+
+router.post('/api/operations/qc', asyncRoute(async (req, res) => {
+    const { productionId, qc, serial } = req.body || {};
+    if (!productionId || !['Passed', 'Failed'].includes(qc)) throw badRequest('Production ID and valid QC result are required');
+    await withTransaction(async client => {
+        const row = (await query('SELECT * FROM production WHERE id = $1 FOR UPDATE', [productionId], client)).rows[0];
+        if (!row) throw operationError(`Production record not found: ${productionId}`, 404);
+        if (qc === 'Passed') {
+            if (!serial || serial === '—') throw operationError('A valid serial is required to release a pack', 422);
+            const duplicate = (await query('SELECT id FROM production WHERE serial = $1 AND id <> $2 LIMIT 1', [serial, productionId], client)).rows[0];
+            if (duplicate) throw operationError(`Serial already assigned: ${serial}`, 409);
+            await query('UPDATE production SET qc=$1, serial=$2, status=$3 WHERE id=$4', [qc, serial, 'Saleable', productionId], client);
+        } else await query('UPDATE production SET qc=$1, serial=NULL, status=$2 WHERE id=$3', [qc, 'QC failed', productionId], client);
+    });
+    res.json({ success: true, productionId });
+}));
+
+router.post('/api/operations/warranty', asyncRoute(async (req, res) => {
+    const { pack, customer, registered, end, status = 'Active', allowCustom = false } = req.body || {};
+    if (!pack || !customer) throw badRequest('Pack serial and customer are required');
+    await withTransaction(async client => {
+        const production = (await query('SELECT status FROM production WHERE serial = $1 FOR UPDATE', [pack], client)).rows[0];
+        if (!production && !allowCustom) throw operationError(`Cannot activate warranty for unknown pack: ${pack}`, 422);
+        if (production && ['QC failed', 'In QC'].includes(production.status)) throw operationError(`Pack ${pack} is not released for warranty`, 422);
+        await query('INSERT INTO warranties(pack,customer,registered,"end",status) VALUES($1,$2,$3,$4,$5) ON CONFLICT(pack) DO UPDATE SET customer=EXCLUDED.customer,registered=EXCLUDED.registered,"end"=EXCLUDED."end",status=EXCLUDED.status', [pack, customer, registered, end, status], client);
+    });
+    res.json({ success: true, pack });
+}));
+
+router.post('/api/operations/claim', asyncRoute(async (req, res) => {
+    const data = req.body || {};
+    const action = data.action || 'create';
+    if (action === 'create') {
+        if (!data.pack || !data.issue) throw badRequest('Pack and issue are required');
+        const claim = data.claim || `CLM-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+        await withTransaction(async client => {
+            const warranty = (await query('SELECT pack FROM warranties WHERE pack = $1', [data.pack], client)).rows[0];
+            if (!warranty) throw operationError(`No warranty exists for pack ${data.pack}`, 422);
+            await insert('claims', { claim, pack: data.pack, customer: data.customer || 'Unregistered', issue: data.issue, opened: data.opened || new Date().toISOString().slice(0, 10), outcome: data.outcome || 'Inspection', status: 'Open', notes: data.notes || '' }, client);
+        });
+        return res.status(201).json({ success: true, claim });
+    }
+    if (action === 'replace') {
+        const { claim, defectivePack, replacementPack, customer, inheritedEndDate } = data;
+        if (!claim || !defectivePack || !replacementPack) throw badRequest('Claim and both pack serials are required');
+        await withTransaction(async client => {
+            const replacement = (await query('SELECT status FROM production WHERE serial = $1 FOR UPDATE', [replacementPack], client)).rows[0];
+            if (!replacement || !['Saleable', 'Dealer stock'].includes(replacement.status)) throw operationError(`Replacement pack is not available: ${replacementPack}`, 422);
+            await query('UPDATE claims SET status=$1,outcome=$2,replaced_with=$3 WHERE claim=$4', ['Resolved', `Replacement (${replacementPack})`, replacementPack, claim], client);
+            await query('UPDATE warranties SET status=$1 WHERE pack=$2', ['Replaced', defectivePack], client);
+            await query('UPDATE production SET status=$1 WHERE serial=$2', ['Sold (Warranty Replacement)', replacementPack], client);
+            await query('INSERT INTO warranties(pack,customer,registered,"end",status) VALUES($1,$2,$3,$4,$5) ON CONFLICT(pack) DO UPDATE SET customer=EXCLUDED.customer,"end"=EXCLUDED."end",status=EXCLUDED.status', [replacementPack, customer, new Date().toISOString().slice(0, 10), inheritedEndDate, 'Active'], client);
+        });
+        return res.json({ success: true, claim });
+    }
+    if (action === 'update') {
+        if (!data.claim) throw badRequest('Claim is required');
+        await query('UPDATE claims SET status=$1,outcome=$2,issue=$3,notes=$4,replaced_comp=$5,repair_labor=$6,repair_elec=$7 WHERE claim=$8', [data.status, data.outcome, data.issue, data.notes || '', data.replacedComp || 'None', data.repairLabor || 0, data.repairElec || 0, data.claim]);
+        return res.json({ success: true, claim: data.claim });
+    }
+    if (action === 'repair') {
+        const { claim, party, customerState, invoice, items = [], status = 'Resolved', outcome = 'Repaired' } = data;
+        if (!claim || !invoice?.invoice || !items.length) throw badRequest('Claim, invoice, and repair items are required');
+        await withTransaction(async client => {
+            const existing = (await query('SELECT * FROM claims WHERE claim = $1 FOR UPDATE', [claim], client)).rows[0];
+            if (!existing) throw operationError(`Claim not found: ${claim}`, 404);
+            const duplicate = (await query('SELECT invoice FROM invoices WHERE invoice = $1', [invoice.invoice], client)).rows[0];
+            if (duplicate) throw operationError(`Repair invoice already exists: ${invoice.invoice}`, 409);
+            const { items: ignoredItems, ...invoiceRow } = invoice;
+            await insert('invoices', invoiceRow, client);
+            for (const item of items) await insert('invoice_items', { sr: item.sr, desc: item.desc, packSerial: item.packSerial, hsn: item.hsn, qty: item.qty, price: item.price, amount: item.amount, invoiceNo: invoice.invoice }, client);
+            await insert('ledger', { id: `LEDG-${crypto.randomUUID()}`, date: invoice.date, party: party || existing.customer, partyType: 'Customer', ref: invoice.invoice, desc: `Repair Invoice ${invoice.invoice}`, debit: invoice.grandTotal, credit: 0, balance: invoice.balanceAmount ?? invoice.grandTotal }, client);
+            await query('UPDATE claims SET status=$1,outcome=$2,repair_invoice_no=$3,repair_labor=$4,repair_elec=$5,replaced_comp=$6,notes=$7 WHERE claim=$8', [status, outcome, invoice.invoice, data.repairLabor || 0, data.repairElec || 0, data.replacedComp || 'None', data.notes || '', claim], client);
+        });
+        return res.status(201).json({ success: true, claim, invoice: invoice.invoice });
+    }
+    throw badRequest(`Unsupported claim action: ${action}`);
+}));
+
+router.get('/api/settings', asyncRoute(async (req, res) => {
+    const rows = (await query('SELECT * FROM system_settings')).rows; const settings = {};
+    for (const row of rows) { try { settings[row.key] = JSON.parse(row.value); } catch { settings[row.key] = row.value; } }
+    res.json(settings);
+}));
+router.put('/api/settings', asyncRoute(async (req, res) => {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) throw badRequest('Settings must be an object');
+    await withTransaction(async client => { for (const [key, value] of Object.entries(req.body)) await query('INSERT INTO system_settings (key,value) VALUES ($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value', [key, typeof value === 'object' ? JSON.stringify(value) : String(value)], client); });
+    res.json(req.body);
+}));
+router.get('/api/health', asyncRoute(async (req, res) => { const records = await getTotalRecords(); res.json({ status: 'ok', database: 'postgres', totalRecords: records.total, tables: records.tables }); }));
+router.post('/api/backup', asyncRoute(async (req, res) => res.status(410).json({ error: 'Local SQLite backup is not available in hosted mode. Use Neon backups and exports.' })));
+router.post('/api/sync/backup-now', asyncRoute(async (req, res) => {
+    const { syncAllTables } = require('./sheetsSync'); res.json(await syncAllTables());
+}));
+router.get('/api/sync/status', asyncRoute(async (req, res) => res.json((await query('SELECT * FROM sync_log ORDER BY id DESC LIMIT 50')).rows.map(keysToCamel))));
+
+router.get('/api/load-state', asyncRoute(async (req, res) => {
+    const state = {};
+    for (const [key, table] of Object.entries(stateTableMap)) state[key] = await getAll(table);
+    state.models = await embeddedModels(); state.invoices = await embeddedInvoices(); state.purchaseBills = await embeddedPurchaseBills();
+    state._syncVersion = Number((await query("SELECT value FROM app_meta WHERE key = 'state_version'")).rows[0]?.value || 0);
+    const rows = (await query('SELECT * FROM system_settings')).rows; state.settings = {};
+    for (const row of rows) { try { state.settings[row.key] = JSON.parse(row.value); } catch { state.settings[row.key] = row.value; } }
+    res.json(state);
+}));
+
 const simpleEntities = [
-    { table: 'components', pk: 'id', path: '/api/components' },
-    { table: 'inventory', pk: 'batch', path: '/api/inventory' },
-    { table: 'production', pk: 'id', path: '/api/production' },
-    { table: 'dealers', pk: 'id', path: '/api/dealers' },
-    { table: 'sales', pk: 'invoice', path: '/api/sales' },
-    { table: 'ledger', pk: 'id', path: '/api/ledger' },
-    { table: 'warranties', pk: 'pack', path: '/api/warranties' },
-    { table: 'claims', pk: 'claim', path: '/api/claims' },
-    { table: 'suppliers', pk: 'id', path: '/api/suppliers' },
-    { table: 'supplier_ledger', pk: 'id', path: '/api/supplier-ledger' },
-    { table: 'vehicle_models', pk: 'id', path: '/api/vehicle-models' },
-    { table: 'vehicles', pk: 'chassis_no', path: '/api/vehicles' },
-    { table: 'vehicle_invoices', pk: 'invoice', path: '/api/vehicle-invoices' },
-    { table: 'bank_accounts', pk: 'id', path: '/api/bank-accounts' }
+    ['components', 'id', '/api/components'], ['inventory', 'batch', '/api/inventory'], ['production', 'id', '/api/production'],
+    ['dealers', 'id', '/api/dealers'], ['sales', 'invoice', '/api/sales'], ['ledger', 'id', '/api/ledger'],
+    ['warranties', 'pack', '/api/warranties'], ['claims', 'claim', '/api/claims'], ['suppliers', 'id', '/api/suppliers'],
+    ['supplier_ledger', 'id', '/api/supplier-ledger'], ['vehicle_models', 'id', '/api/vehicle-models'],
+    ['vehicles', 'chassis_no', '/api/vehicles'], ['vehicle_invoices', 'invoice', '/api/vehicle-invoices'], ['bank_accounts', 'id', '/api/bank-accounts']
 ];
-
-simpleEntities.forEach(entity => {
-    // GET
-    router.get(entity.path, (req, res) => {
-        try {
-            res.json(getAll(entity.table));
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    });
-
-    // POST
-    router.post(entity.path, (req, res) => {
-        try {
-            insert(entity.table, req.body);
-            res.status(201).json(req.body);
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    });
-
-    // PUT
-    router.put(`${entity.path}/:id`, (req, res) => {
-        try {
-            update(entity.table, entity.pk, req.params.id, req.body);
-            res.json(req.body);
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    });
-
-    // DELETE
-    router.delete(`${entity.path}/:id`, (req, res) => {
-        try {
-            remove(entity.table, entity.pk, req.params.id);
-            res.status(204).end();
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    });
-});
+for (const [table, pk, path] of simpleEntities) {
+    router.get(path, asyncRoute(async (req, res) => res.json(await getAll(table))));
+    router.post(path, asyncRoute(async (req, res) => { await insert(table, req.body || {}); res.status(201).json(req.body); }));
+    router.put(`${path}/:id`, asyncRoute(async (req, res) => { await update(table, pk, req.params.id, req.body || {}); res.json(req.body); }));
+    router.delete(`${path}/:id`, asyncRoute(async (req, res) => { await remove(table, pk, req.params.id); res.status(204).end(); }));
+}
 
 module.exports = router;

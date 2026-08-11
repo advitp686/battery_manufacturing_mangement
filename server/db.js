@@ -1,418 +1,187 @@
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
+const { Pool } = require('pg');
 
-// Ensure data directory exists
-const dataDir = path.join(__dirname, '..', 'data');
-if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required. Configure Neon PostgreSQL before starting the server.');
 }
 
-// Open DB with better-sqlite3
-const dbPath = path.join(dataDir, 'battery_mgmt.db');
-const db = new Database(dbPath);
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: Number(process.env.DB_POOL_MAX || 10),
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined
+});
 
-// Enable WAL and Foreign Keys
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const TABLES = [
+    'components', 'models', 'model_bom', 'inventory', 'production', 'dealers', 'sales',
+    'invoices', 'invoice_items', 'ledger', 'warranties', 'claims', 'suppliers',
+    'supplier_ledger', 'purchase_bills', 'purchase_bill_items', 'vehicle_models',
+    'vehicles', 'vehicle_invoices', 'bank_accounts', 'system_settings', 'sync_log'
+];
 
-// Create ALL 20 tables
-db.exec(`
-    CREATE TABLE IF NOT EXISTS components (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        category TEXT,
-        spec TEXT,
-        price REAL DEFAULT 0,
-        supplier TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS models (
-        code TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        chemistry TEXT,
-        config TEXT,
-        capacity TEXT,
-        warranty TEXT,
-        status TEXT DEFAULT 'Active'
-    );
-
-    CREATE TABLE IF NOT EXISTS model_bom (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        model_code TEXT NOT NULL REFERENCES models(code) ON DELETE CASCADE,
-        component_id TEXT,
-        name TEXT,
-        category TEXT,
-        qty REAL,
-        unit_price REAL
-    );
-
-    CREATE TABLE IF NOT EXISTS inventory (
-        batch TEXT PRIMARY KEY,
-        material TEXT,
-        category TEXT,
-        supplier TEXT,
-        received TEXT,
-        available TEXT,
-        location TEXT,
-        health TEXT DEFAULT 'Good',
-        unit_price REAL DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS production (
-        id TEXT PRIMARY KEY,
-        model TEXT,
-        operator TEXT,
-        built TEXT,
-        qc TEXT DEFAULT 'Awaiting',
-        serial TEXT UNIQUE,
-        status TEXT DEFAULT 'In QC'
-    );
-
-    CREATE TABLE IF NOT EXISTS dealers (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        title TEXT,
-        contact_person TEXT,
-        gst_type TEXT,
-        gstin TEXT,
-        pan TEXT,
-        phone TEXT,
-        address TEXT,
-        city TEXT,
-        state TEXT,
-        pin TEXT,
-        credit_limit REAL DEFAULT 0,
-        credit_days INTEGER DEFAULT 0,
-        opening_balance REAL DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS sales (
-        invoice TEXT PRIMARY KEY,
-        pack TEXT,
-        party TEXT,
-        type TEXT,
-        gstin TEXT,
-        date TEXT,
-        warranty TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS invoices (
-        invoice TEXT PRIMARY KEY,
-        date TEXT,
-        party TEXT,
-        father_name TEXT,
-        phone TEXT,
-        address TEXT,
-        vehicle TEXT,
-        type TEXT,
-        party_state TEXT,
-        tax_mode TEXT,
-        taxable_value REAL,
-        total_gst REAL,
-        cgst_rate REAL,
-        cgst_amount REAL,
-        sgst_rate REAL,
-        sgst_amount REAL,
-        igst_rate REAL,
-        igst_amount REAL,
-        cess_amount REAL DEFAULT 0,
-        grand_total REAL,
-        amount_in_words TEXT,
-        paid_amount REAL DEFAULT 0,
-        balance_amount REAL DEFAULT 0,
-        warranty_status TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS invoice_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        invoice_no TEXT NOT NULL REFERENCES invoices(invoice) ON DELETE CASCADE,
-        sr INTEGER,
-        desc TEXT,
-        pack_serial TEXT,
-        hsn TEXT,
-        chassis_vin TEXT,
-        engine_motor TEXT,
-        color TEXT,
-        key_controller TEXT,
-        wrc_no TEXT,
-        charger_info TEXT,
-        battery_info TEXT,
-        qty REAL,
-        price REAL,
-        amount REAL
-    );
-
-    CREATE TABLE IF NOT EXISTS ledger (
-        id TEXT PRIMARY KEY,
-        date TEXT,
-        party TEXT,
-        party_type TEXT,
-        ref TEXT,
-        desc TEXT,
-        debit REAL DEFAULT 0,
-        credit REAL DEFAULT 0,
-        balance REAL DEFAULT 0,
-        bank_account TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS warranties (
-        pack TEXT PRIMARY KEY,
-        customer TEXT,
-        registered TEXT,
-        end TEXT,
-        status TEXT DEFAULT 'Active'
-    );
-
-    CREATE TABLE IF NOT EXISTS claims (
-        claim TEXT PRIMARY KEY,
-        pack TEXT,
-        customer TEXT,
-        issue TEXT,
-        opened TEXT,
-        outcome TEXT,
-        status TEXT DEFAULT 'Open',
-        replaced_with TEXT,
-        replaced_comp TEXT,
-        repair_labor REAL DEFAULT 0,
-        repair_elec REAL DEFAULT 0,
-        repair_invoice_no TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS suppliers (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        contact_person TEXT,
-        phone TEXT,
-        gstin TEXT,
-        address TEXT,
-        state TEXT,
-        category TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS supplier_ledger (
-        id TEXT PRIMARY KEY,
-        date TEXT,
-        supplier TEXT,
-        ref TEXT,
-        desc TEXT,
-        debit REAL DEFAULT 0,
-        credit REAL DEFAULT 0,
-        balance REAL DEFAULT 0,
-        bank_account TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS vehicle_models (
-        id TEXT PRIMARY KEY,
-        name TEXT,
-        type TEXT,
-        motor TEXT,
-        battery_spec TEXT,
-        hsn TEXT,
-        gst_rate REAL,
-        price REAL
-    );
-
-    CREATE TABLE IF NOT EXISTS vehicles (
-        chassis_no TEXT PRIMARY KEY,
-        model TEXT,
-        motor_no TEXT,
-        battery_serial TEXT,
-        color TEXT,
-        price REAL,
-        status TEXT DEFAULT 'Available in Showroom'
-    );
-
-    CREATE TABLE IF NOT EXISTS vehicle_invoices (
-        invoice TEXT PRIMARY KEY,
-        party TEXT,
-        father_name TEXT,
-        phone TEXT,
-        address TEXT,
-        party_state TEXT,
-        type TEXT,
-        date TEXT,
-        model TEXT,
-        chassis_no TEXT,
-        motor_no TEXT,
-        battery_serial TEXT,
-        color TEXT,
-        hsn TEXT,
-        taxable_value REAL,
-        total_gst REAL,
-        grand_total REAL,
-        bank_account TEXT,
-        paid_amount REAL DEFAULT 0,
-        balance_amount REAL DEFAULT 0,
-        status TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS bank_accounts (
-        id TEXT PRIMARY KEY,
-        bank_name TEXT,
-        acc_type TEXT,
-        acc_no TEXT,
-        ifsc TEXT,
-        branch TEXT,
-        is_primary INTEGER DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS system_settings (
-        key TEXT PRIMARY KEY,
-        value TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS sync_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        table_name TEXT,
-        record_count INTEGER,
-        action TEXT,
-        status TEXT,
-        error TEXT,
-        timestamp TEXT
-    );
-`);
-
-/**
- * Convert string from camelCase to snake_case
- * @param {string} str 
- * @returns {string}
- */
-function toSnake(str) {
-    return str.replace(/[A-Z]/g, l => '_' + l.toLowerCase());
+async function initDatabase() {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS components (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT, spec TEXT,
+            price NUMERIC DEFAULT 0, supplier TEXT, hsn TEXT,
+            sgst_rate NUMERIC DEFAULT 0, igst_rate NUMERIC DEFAULT 0, other_tax_rate NUMERIC DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS models (
+            code TEXT PRIMARY KEY, name TEXT NOT NULL, chemistry TEXT, config TEXT,
+            capacity TEXT, warranty TEXT, status TEXT DEFAULT 'Active'
+        );
+        CREATE TABLE IF NOT EXISTS model_bom (
+            id BIGSERIAL PRIMARY KEY, model_code TEXT NOT NULL REFERENCES models(code) ON DELETE CASCADE,
+            component_id TEXT, name TEXT, category TEXT, qty NUMERIC, unit_price NUMERIC
+        );
+        CREATE TABLE IF NOT EXISTS inventory (
+            batch TEXT PRIMARY KEY, material TEXT, category TEXT, supplier TEXT, received TEXT,
+            available TEXT, location TEXT, health TEXT DEFAULT 'Good', unit_price NUMERIC DEFAULT 0,
+            hsn TEXT, gst_rate NUMERIC DEFAULT 0, bill_no TEXT, eway_bill_no TEXT
+        );
+        CREATE TABLE IF NOT EXISTS production (
+            id TEXT PRIMARY KEY, model TEXT, operator TEXT, built TEXT, qc TEXT DEFAULT 'Awaiting',
+            serial TEXT UNIQUE, status TEXT DEFAULT 'In QC'
+        );
+        CREATE TABLE IF NOT EXISTS dealers (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, title TEXT, contact_person TEXT, gst_type TEXT,
+            gstin TEXT, pan TEXT, phone TEXT, address TEXT, city TEXT, state TEXT, pin TEXT,
+            credit_limit NUMERIC DEFAULT 0, credit_days INTEGER DEFAULT 0, opening_balance NUMERIC DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS sales (
+            id BIGSERIAL PRIMARY KEY, invoice TEXT NOT NULL, pack TEXT, party TEXT, type TEXT, gstin TEXT, date TEXT, warranty TEXT,
+            amount NUMERIC DEFAULT 0, "desc" TEXT
+        );
+        CREATE TABLE IF NOT EXISTS invoices (
+            invoice TEXT PRIMARY KEY, date TEXT, party TEXT, father_name TEXT, phone TEXT, address TEXT,
+            vehicle TEXT, type TEXT, party_state TEXT, tax_mode TEXT, taxable_value NUMERIC, total_gst NUMERIC,
+            cgst_rate NUMERIC, cgst_amount NUMERIC, sgst_rate NUMERIC, sgst_amount NUMERIC,
+            igst_rate NUMERIC, igst_amount NUMERIC, cess_amount NUMERIC DEFAULT 0, grand_total NUMERIC,
+            amount_in_words TEXT, paid_amount NUMERIC DEFAULT 0, balance_amount NUMERIC DEFAULT 0, warranty_status TEXT
+        );
+        CREATE TABLE IF NOT EXISTS invoice_items (
+            id BIGSERIAL PRIMARY KEY, invoice_no TEXT NOT NULL REFERENCES invoices(invoice) ON DELETE CASCADE,
+            sr INTEGER, "desc" TEXT, pack_serial TEXT, hsn TEXT, chassis_vin TEXT, engine_motor TEXT,
+            color TEXT, key_controller TEXT, wrc_no TEXT, charger_info TEXT, battery_info TEXT,
+            qty NUMERIC, price NUMERIC, amount NUMERIC
+        );
+        CREATE TABLE IF NOT EXISTS ledger (
+            id TEXT PRIMARY KEY, date TEXT, party TEXT, party_type TEXT, ref TEXT, "desc" TEXT,
+            debit NUMERIC DEFAULT 0, credit NUMERIC DEFAULT 0, balance NUMERIC DEFAULT 0, bank_account TEXT
+        );
+        CREATE TABLE IF NOT EXISTS warranties (
+            pack TEXT PRIMARY KEY, customer TEXT, registered TEXT, "end" TEXT, status TEXT DEFAULT 'Active'
+        );
+        CREATE TABLE IF NOT EXISTS claims (
+            claim TEXT PRIMARY KEY, pack TEXT, customer TEXT, issue TEXT, opened TEXT, outcome TEXT,
+            status TEXT DEFAULT 'Open', replaced_with TEXT, replaced_comp TEXT, repair_labor NUMERIC DEFAULT 0,
+            repair_elec NUMERIC DEFAULT 0, repair_invoice_no TEXT
+        );
+        CREATE TABLE IF NOT EXISTS suppliers (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, contact_person TEXT, phone TEXT, gstin TEXT,
+            address TEXT, state TEXT, category TEXT
+        );
+        CREATE TABLE IF NOT EXISTS supplier_ledger (
+            id TEXT PRIMARY KEY, date TEXT, supplier TEXT, ref TEXT, "desc" TEXT,
+            debit NUMERIC DEFAULT 0, credit NUMERIC DEFAULT 0, balance NUMERIC DEFAULT 0, bank_account TEXT
+        );
+        CREATE TABLE IF NOT EXISTS purchase_bills (
+            id TEXT PRIMARY KEY, bill_no TEXT NOT NULL, bill_date TEXT, eway_bill_no TEXT, supplier TEXT,
+            taxable_value NUMERIC DEFAULT 0, sgst_amount NUMERIC DEFAULT 0, igst_amount NUMERIC DEFAULT 0,
+            other_amount NUMERIC DEFAULT 0, grand_total NUMERIC DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS purchase_bill_items (
+            id BIGSERIAL PRIMARY KEY, bill_id TEXT NOT NULL REFERENCES purchase_bills(id) ON DELETE CASCADE,
+            component_id TEXT, name TEXT, category TEXT, qty NUMERIC, unit_price NUMERIC, hsn TEXT,
+            sgst_rate NUMERIC DEFAULT 0, igst_rate NUMERIC DEFAULT 0, other_rate NUMERIC DEFAULT 0,
+            taxable_value NUMERIC DEFAULT 0, sgst_amount NUMERIC DEFAULT 0, igst_amount NUMERIC DEFAULT 0,
+            other_amount NUMERIC DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS vehicle_models (
+            id TEXT PRIMARY KEY, name TEXT, type TEXT, motor TEXT, battery_spec TEXT, hsn TEXT,
+            gst_rate NUMERIC, price NUMERIC
+        );
+        CREATE TABLE IF NOT EXISTS vehicles (
+            chassis_no TEXT PRIMARY KEY, model TEXT, motor_no TEXT, battery_serial TEXT, color TEXT,
+            price NUMERIC, status TEXT DEFAULT 'Available in Showroom'
+        );
+        CREATE TABLE IF NOT EXISTS vehicle_invoices (
+            invoice TEXT PRIMARY KEY, party TEXT, father_name TEXT, phone TEXT, address TEXT,
+            party_state TEXT, type TEXT, date TEXT, model TEXT, chassis_no TEXT, motor_no TEXT,
+            battery_serial TEXT, color TEXT, hsn TEXT, taxable_value NUMERIC, total_gst NUMERIC,
+            grand_total NUMERIC, bank_account TEXT, paid_amount NUMERIC DEFAULT 0,
+            balance_amount NUMERIC DEFAULT 0, status TEXT
+        );
+        CREATE TABLE IF NOT EXISTS bank_accounts (
+            id TEXT PRIMARY KEY, bank_name TEXT, acc_type TEXT, acc_no TEXT, ifsc TEXT, branch TEXT,
+            is_primary BOOLEAN DEFAULT FALSE
+        );
+        CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS sync_log (
+            id BIGSERIAL PRIMARY KEY, table_name TEXT, record_count INTEGER, action TEXT,
+            status TEXT, error TEXT, timestamp TEXT
+        );
+        CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_no ON invoice_items(invoice_no)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_model_bom_model_code ON model_bom(model_code)`);
+    await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS amount NUMERIC DEFAULT 0`);
+    await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS "desc" TEXT`);
+    await pool.query(`ALTER TABLE claims ADD COLUMN IF NOT EXISTS notes TEXT`);
+    await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS id BIGSERIAL`);
+    await pool.query(`ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_pkey`);
+    await pool.query(`ALTER TABLE sales ADD CONSTRAINT sales_pkey PRIMARY KEY (id)`);
 }
 
-/**
- * Convert string from snake_case to camelCase
- * @param {string} str 
- * @returns {string}
- */
-function toCamel(str) {
-    return str.replace(/_([a-z])/g, (_, l) => l.toUpperCase());
-}
-
-/**
- * Convert object keys from camelCase to snake_case
- * @param {Object} obj 
- * @returns {Object}
- */
+function toSnake(str) { return str.replace(/[A-Z]/g, l => '_' + l.toLowerCase()); }
+function toCamel(str) { return str.replace(/_([a-z])/g, (_, l) => l.toUpperCase()); }
 function keysToSnake(obj) {
-    if (typeof obj !== 'object' || obj === null) return obj;
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-        result[toSnake(key)] = value;
-    }
-    return result;
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return obj;
+    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [toSnake(k), v]));
 }
-
-/**
- * Convert object keys from snake_case to camelCase
- * @param {Object} obj 
- * @returns {Object}
- */
 function keysToCamel(obj) {
-    if (typeof obj !== 'object' || obj === null) return obj;
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-        result[toCamel(key)] = value;
-    }
-    return result;
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return obj;
+    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [toCamel(k), v]));
+}
+function assertTable(table) { if (!TABLES.includes(table)) throw new Error(`Unsupported table: ${table}`); }
+function assertColumns(obj) {
+    for (const key of Object.keys(obj)) if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) throw new Error(`Invalid column: ${key}`);
 }
 
-/**
- * Get all records from a table
- * @param {string} table 
- * @returns {Array<Object>}
- */
-function getAll(table) {
-    return db.prepare(`SELECT * FROM ${table}`).all().map(keysToCamel);
+async function query(text, params = [], client = pool) { return client.query(text, params); }
+async function getAll(table, client = pool) {
+    assertTable(table); const result = await query(`SELECT * FROM "${table}"`, [], client); return result.rows.map(keysToCamel);
+}
+async function getById(table, pkCol, id, client = pool) {
+    assertTable(table); const result = await query(`SELECT * FROM "${table}" WHERE "${pkCol}" = $1`, [id], client);
+    return result.rows[0] ? keysToCamel(result.rows[0]) : null;
+}
+async function insert(table, obj, client = pool) {
+    assertTable(table); const row = keysToSnake(obj); assertColumns(row); const keys = Object.keys(row);
+    if (!keys.length) throw new Error('Cannot insert an empty record');
+    const values = Object.values(row); const params = values.map((_, i) => `$${i + 1}`).join(',');
+    const result = await query(`INSERT INTO "${table}" (${keys.map(k => `"${k}"`).join(',')}) VALUES (${params}) RETURNING *`, values, client);
+    return result.rows[0];
+}
+async function update(table, pkCol, id, obj, client = pool) {
+    assertTable(table); const row = keysToSnake(obj); assertColumns(row); const keys = Object.keys(row);
+    if (!keys.length) return { rowCount: 0 };
+    const values = Object.values(row); const set = keys.map((k, i) => `"${k}" = $${i + 1}`).join(',');
+    return query(`UPDATE "${table}" SET ${set} WHERE "${pkCol}" = $${values.length + 1}`, [...values, id], client);
+}
+async function remove(table, pkCol, id, client = pool) {
+    assertTable(table); return query(`DELETE FROM "${table}" WHERE "${pkCol}" = $1`, [id], client);
+}
+async function withTransaction(callback) {
+    const client = await pool.connect();
+    try { await client.query('BEGIN'); const result = await callback(client); await client.query('COMMIT'); return result; }
+    catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+}
+async function getTotalRecords() {
+    const tables = TABLES.filter(t => !['system_settings', 'sync_log'].includes(t));
+    const entries = await Promise.all(tables.map(async table => [table, Number((await query(`SELECT COUNT(*)::int AS count FROM "${table}"`)).rows[0].count)]));
+    const breakdown = Object.fromEntries(entries); return { total: entries.reduce((sum, [, count]) => sum + count, 0), tables: breakdown };
 }
 
-/**
- * Get a single record by primary key
- * @param {string} table 
- * @param {string} pkCol 
- * @param {string|number} id 
- * @returns {Object|null}
- */
-function getById(table, pkCol, id) {
-    const record = db.prepare(`SELECT * FROM ${table} WHERE "${pkCol}" = ?`).get(id);
-    return record ? keysToCamel(record) : null;
-}
-
-/**
- * Insert a record into a table
- * @param {string} table 
- * @param {Object} obj 
- * @returns {Object} info object from sqlite
- */
-function insert(table, obj) {
-    const snakeObj = keysToSnake(obj);
-    const keys = Object.keys(snakeObj);
-    const quotedKeys = keys.map(k => `"${k}"`).join(',');
-    const placeholders = keys.map(() => '?').join(',');
-    const stmt = db.prepare(`INSERT INTO ${table} (${quotedKeys}) VALUES (${placeholders})`);
-    return stmt.run(Object.values(snakeObj));
-}
-
-/**
- * Update a record in a table
- * @param {string} table 
- * @param {string} pkCol 
- * @param {string|number} id 
- * @param {Object} obj 
- * @returns {Object} info object from sqlite
- */
-function update(table, pkCol, id, obj) {
-    const snakeObj = keysToSnake(obj);
-    const keys = Object.keys(snakeObj);
-    if (keys.length === 0) return { changes: 0 };
-    
-    const setClause = keys.map(k => `"${k}" = ?`).join(',');
-    const stmt = db.prepare(`UPDATE ${table} SET ${setClause} WHERE "${pkCol}" = ?`);
-    return stmt.run([...Object.values(snakeObj), id]);
-}
-
-/**
- * Delete a record from a table
- * @param {string} table 
- * @param {string} pkCol 
- * @param {string|number} id 
- * @returns {Object} info object from sqlite
- */
-function remove(table, pkCol, id) {
-    return db.prepare(`DELETE FROM ${table} WHERE "${pkCol}" = ?`).run(id);
-}
-
-/**
- * Count total records across main entities
- * @returns {Object} total and breakdown
- */
-function getTotalRecords() {
-    const tables = [
-        'components', 'models', 'model_bom', 'inventory', 'production',
-        'dealers', 'sales', 'invoices', 'invoice_items', 'ledger',
-        'warranties', 'claims', 'suppliers', 'supplier_ledger',
-        'vehicle_models', 'vehicles', 'vehicle_invoices', 'bank_accounts'
-    ];
-    let total = 0;
-    const breakdown = {};
-    for (const table of tables) {
-        const result = db.prepare(`SELECT COUNT(*) as count FROM ${table}`).get();
-        breakdown[table] = result.count;
-        total += result.count;
-    }
-    return { total, tables: breakdown };
-}
-
-module.exports = { 
-    db, 
-    getAll, 
-    getById, 
-    insert, 
-    update, 
-    remove, 
-    getTotalRecords, 
-    keysToSnake, 
-    keysToCamel 
-};
+module.exports = { pool, query, initDatabase, getAll, getById, insert, update, remove, withTransaction, getTotalRecords, keysToSnake, keysToCamel, TABLES };

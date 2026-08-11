@@ -324,9 +324,33 @@ const state = {
 // ═══════════════════════════════════════════════════════════════════════
 // SQLite Backend API Configuration (v3.0)
 // ═══════════════════════════════════════════════════════════════════════
-const LITHYNOVA_API_KEY = 'lithynova-factory-2024';
+// Authentication is handled by an HttpOnly server session. No API secret is shipped to the browser.
 let _serverOnline = false;
 let _syncDebounceTimer = null;
+
+async function ensureAuthenticated() {
+  const me = await fetch('/api/auth/me', { credentials: 'same-origin' }).then(r => r.json());
+  if (me.authenticated) { localStorage.setItem('tejas_user_role', me.user?.role || 'Staff'); return me; }
+
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.id = 'auth-gate';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(13,27,47,.72);display:grid;place-items:center;z-index:2000;padding:20px;';
+    overlay.innerHTML = `<form style="width:min(380px,100%);background:#fff;border-radius:12px;padding:26px;box-shadow:0 20px 70px rgba(0,0,0,.3)"><h2 style="margin:0 0 8px">Sign in</h2><p style="color:#718096;font-size:12px;margin:0 0 18px">Authenticate to access the battery management system.</p><label style="display:block;font-size:12px;font-weight:700;margin-bottom:5px">Username</label><input name="username" value="admin" required style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:6px;margin-bottom:12px"><label style="display:block;font-size:12px;font-weight:700;margin-bottom:5px">Password</label><input name="password" type="password" required style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:6px;margin-bottom:12px"><div data-error style="color:#c53030;font-size:11px;min-height:18px;margin-bottom:8px"></div><button class="primary-btn" type="submit" style="width:100%">Sign in</button></form>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('input[name="password"]').focus();
+    overlay.querySelector('form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const response = await fetch('/api/auth/login', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(form)) });
+      if (!response.ok) { overlay.querySelector('[data-error]').textContent = 'Invalid username or password.'; return; }
+      const user = await response.json();
+      localStorage.setItem('tejas_user_role', user.role || 'Staff');
+      overlay.remove();
+      resolve(user);
+    });
+  });
+}
 
 /** Check if SQLite backend is available and auto-migrate localStorage data */
 async function checkAndMigrate() {
@@ -341,7 +365,7 @@ async function checkAndMigrate() {
       console.log('[SQLite] Empty database detected. Auto-migrating localStorage data...');
       const migrateRes = await fetch('/api/migrate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-API-Key': LITHYNOVA_API_KEY },
+        headers: { 'Content-Type': 'application/json' },
         body: localStorage.getItem('voltforge_state_v3')
       });
       if (migrateRes.ok) {
@@ -480,7 +504,7 @@ const DEFAULT_SYSTEM_SETTINGS = {
   gstRate: 5,
   hsnBattery: '87116020',
   hsnCharger: '85044090',
-  adminPassword: 'ChangeMe123!'
+  adminPassword: ''
 };
 
 function getSystemSettings() {
@@ -852,7 +876,7 @@ function updateDatabaseMetricsUI() {
 function saveState() {
   try {
     // Always save to localStorage + IndexedDB as fallback
-    localStorage.setItem('voltforge_state_v3', JSON.stringify(state));
+  localStorage.setItem('voltforge_state_v3', JSON.stringify(state));
     saveStateToDB(state);
 
     // Sync to SQLite backend (debounced to avoid flooding on rapid edits)
@@ -861,12 +885,19 @@ function saveState() {
       _syncDebounceTimer = setTimeout(() => {
         fetch('/api/sync-state', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-API-Key': LITHYNOVA_API_KEY },
-          body: JSON.stringify(state)
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...state, _syncVersion: Number(state._syncVersion || 0) })
         }).then(res => {
-          if (!res.ok) console.warn('[SQLite] Sync failed:', res.status);
+          if (!res.ok) {
+            if (res.status === 409) toast('This data changed elsewhere. Reload before saving to avoid overwriting it.');
+            console.warn('[Postgres] Sync failed:', res.status);
+            return null;
+          }
+          return res.json();
+        }).then(result => {
+          if (result?.version !== undefined) state._syncVersion = result.version;
         }).catch(e => {
-          console.warn('[SQLite] Sync error, server may be offline:', e.message);
+          console.warn('[Postgres] Sync error, server may be offline:', e.message);
           _serverOnline = false;
           showOfflineBanner();
         });
@@ -986,7 +1017,7 @@ function loadState() {
 
   // Step 2: Try loading from SQLite backend (async, authoritative if available)
   fetch('/api/load-state', {
-    headers: { 'X-API-Key': LITHYNOVA_API_KEY }
+    credentials: 'same-origin'
   }).then(res => {
     if (!res.ok) throw new Error('Server returned ' + res.status);
     return res.json();
@@ -1004,6 +1035,8 @@ function loadState() {
             state[k] = serverState[k];
           }
         });
+        if (serverState._syncVersion !== undefined) state._syncVersion = serverState._syncVersion;
+        if (serverState.settings && typeof serverState.settings === 'object') localStorage.setItem(SYSTEM_SETTINGS_KEY, JSON.stringify(serverState.settings));
         // Cache to IndexedDB for offline fallback
         saveStateToDB(state);
         console.log(`[SQLite] Loaded ${serverRecs} records from server`);
@@ -1032,6 +1065,20 @@ function loadState() {
       updateDatabaseMetricsUI();
     });
   });
+}
+
+async function refreshHostedState() {
+  const response = await fetch('/api/load-state', { credentials: 'same-origin' });
+  if (!response.ok) throw new Error(`Hosted state load failed (${response.status})`);
+  const serverState = await response.json();
+  Object.keys(serverState).forEach(key => {
+    if (Array.isArray(serverState[key])) state[key] = serverState[key];
+  });
+  if (serverState._syncVersion !== undefined) state._syncVersion = serverState._syncVersion;
+  if (serverState.settings && typeof serverState.settings === 'object') localStorage.setItem(SYSTEM_SETTINGS_KEY, JSON.stringify(serverState.settings));
+  localStorage.setItem('voltforge_state_v3', JSON.stringify(state));
+  saveStateToDB(state);
+  render();
 }
 
 function render() {
@@ -1113,8 +1160,9 @@ function render() {
             <td>${c.spec}</td>
             <td><strong style="color:#2f855a">${formatINR(c.price)}</strong></td>
             <td>${c.supplier}</td>
+            <td><small>HSN ${c.hsn || '—'}</small><br><small>${c.sgstRate || 0}% SGST · ${c.igstRate || 0}% IGST · ${c.otherTaxRate || 0}% Other</small></td>
             <td>${modelsUsing.length > 0 ? `<span class="badge neutral">${modelsUsing.length} models</span>` : '<span style="color:#a0aec0">Unassigned</span>'}</td>
-            <td><button class="secondary-btn btn-edit-comp" data-idx="${idx}" style="padding:4px 10px;font-size:11px;">✎ Edit</button></td>
+            <td><div style="display:flex;gap:5px;flex-wrap:wrap;"><button class="secondary-btn btn-edit-comp" data-idx="${idx}" style="padding:4px 10px;font-size:11px;">✎ Edit</button><button class="secondary-btn btn-delete-comp" data-idx="${idx}" style="padding:4px 10px;font-size:11px;color:#c53030;background:#fff5f5;">Delete</button></div></td>
           </tr>
         `;
       }).join('');
@@ -1830,7 +1878,7 @@ function populateSettingsUI() {
 
   if ($('#set-hsn-battery')) $('#set-hsn-battery').value = settings.hsnBattery || '87116020';
   if ($('#set-hsn-charger')) $('#set-hsn-charger').value = settings.hsnCharger || '85044090';
-  if ($('#set-admin-password')) $('#set-admin-password').value = settings.adminPassword || 'ChangeMe123!';
+  if ($('#set-admin-password')) $('#set-admin-password').value = '';
 
   renderBankAccountsSettings();
 }
@@ -1948,6 +1996,10 @@ function editComponentModal(compIdx) {
       <div class="field"><label>Unit Price (₹)</label><input name="price" type="number" value="${comp.price}" required /></div>
       <div class="field full"><label>Specifications</label><input name="spec" value="${comp.spec}" required /></div>
       <div class="field full"><label>Default Supplier</label><input name="supplier" value="${comp.supplier}" required /></div>
+      <div class="field"><label>HSN Code</label><input name="hsn" value="${comp.hsn || ''}" /></div>
+      <div class="field"><label>SGST Rate (%)</label><input name="sgstRate" type="number" step="0.01" value="${comp.sgstRate ?? 0}" /></div>
+      <div class="field"><label>IGST Rate (%)</label><input name="igstRate" type="number" step="0.01" value="${comp.igstRate ?? 0}" /></div>
+      <div class="field"><label>Other Tax/Cess (%)</label><input name="otherTaxRate" type="number" step="0.01" value="${comp.otherTaxRate ?? 0}" /></div>
     </div>
   `;
 
@@ -2491,7 +2543,11 @@ const modalSchemas = {
       ['category', 'Category / Type (e.g. BMS, Switch, Wire, SOC)', 'text', 'BMS'],
       ['price', 'Unit price (₹)', 'number', '3400'],
       ['spec', 'Specifications', 'text', '16S 48V 100A UART/CAN'],
-      ['supplier', 'Default supplier', 'text', 'Daly Electronics']
+      ['supplier', 'Default supplier', 'text', 'Daly Electronics'],
+      ['hsn', 'HSN code', 'text', '85076000'],
+      ['sgstRate', 'SGST rate (%)', 'number', '2.5'],
+      ['igstRate', 'IGST rate (%)', 'number', '5'],
+      ['otherTaxRate', 'Other tax/cess (%)', 'number', '0']
     ]
   },
   stock: {
@@ -2548,7 +2604,7 @@ const modalSchemas = {
 };
 
 function getCurrentUserRole() {
-  return localStorage.getItem('tejas_user_role') || 'Admin';
+  return localStorage.getItem('tejas_user_role') || 'Staff';
 }
 
 function setUserRole(role) {
@@ -2618,7 +2674,7 @@ function openRoleModal() {
         ${currentRole === 'Staff' ? `
           <div style="margin-top:12px;padding-top:10px;border-top:1px solid #e2e8f0;">
             <label style="font-size:11px;font-weight:800;color:#c05621;display:block;margin-bottom:4px;">🔑 ENTER ADMIN PASSWORD TO UNLOCK ADMINISTRATOR ROLE:</label>
-            <input type="password" id="role-admin-pass-input" placeholder="Admin Password (Default: ChangeMe123!)" style="width:100%;padding:8px;font-size:13px;border:1px solid #cbd5e1;border-radius:6px;box-sizing:border-box;font-weight:700;" />
+            <input type="password" id="role-admin-pass-input" placeholder="Administrator password" style="width:100%;padding:8px;font-size:13px;border:1px solid #cbd5e1;border-radius:6px;box-sizing:border-box;font-weight:700;" />
           </div>
         ` : ''}
       </div>
@@ -2646,13 +2702,14 @@ function openRoleModal() {
       const targetRole = btn.dataset.role;
       if (targetRole === 'Admin' && currentRole !== 'Admin') {
         const inputPass = ($('#role-admin-pass-input')?.value || '').trim();
-        const settings = getSystemSettings();
-        const correctPass = String(settings.adminPassword || 'ChangeMe123!').trim();
-        if (!inputPass || inputPass !== correctPass) {
-          toast('❌ Invalid Administrator Password. Access Denied.');
-          return;
-        }
+        if (!inputPass) { toast('❌ Administrator password is required.'); return; }
+        fetch('/api/auth/login', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: inputPass }) })
+          .then(response => { if (!response.ok) throw new Error('Invalid administrator password'); return response.json(); })
+          .then(user => { setUserRole(user.role || 'Admin'); closeModal(); toast('Switched to Administrator profile.'); })
+          .catch(() => toast('❌ Invalid Administrator Password. Access Denied.'));
+        return;
       }
+      if (targetRole === 'Staff' && currentRole === 'Admin') { fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).finally(() => window.location.reload()); return; }
       setUserRole(targetRole);
       closeModal();
       toast(`Switched profile to ${targetRole === 'Admin' ? '👨‍💼 Administrator (Full Access)' : '👤 Reception Staff (Restricted Access)'}`);
@@ -3087,6 +3144,20 @@ function openModal(kind) {
   if (kind === 'activate-warranty' || kind === 'activate-warranty-modal') {
     activateWarrantyModal();
     return;
+  }
+
+  if (kind === 'purchase-bill') {
+    const partyOptions = [...(state.suppliers || []), ...(state.dealers || [])].map(s => `<option value="${s.name}">${s.name}</option>`).join('');
+    const itemOptions = (state.components || []).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    const makeRow = (c = state.components?.[0] || {}) => `<div class="purchase-line" style="display:grid;grid-template-columns:1.8fr .6fr .8fr .7fr .7fr .7fr .7fr auto;gap:6px;align-items:end;margin-bottom:7px;"><select name="purchase_item[]" class="purchase-item">${itemOptions}</select><input name="purchase_qty[]" type="number" min="0.01" step="0.01" value="1"><input name="purchase_price[]" type="number" min="0" step="0.01" value="${c.price || 0}"><input name="purchase_hsn[]" value="${c.hsn || ''}"><input name="purchase_sgst[]" type="number" step="0.01" value="${c.sgstRate ?? 0}"><input name="purchase_igst[]" type="number" step="0.01" value="${c.igstRate ?? 0}"><input name="purchase_other[]" type="number" step="0.01" value="${c.otherTaxRate ?? 0}"><button type="button" class="secondary-btn btn-remove-purchase-line" style="padding:7px;color:#c53030;">×</button></div>`;
+    $('#modal-title').textContent = 'Enter Purchase Bill (Multi-Item)';
+    $('.modal').style.width = 'min(980px, 96vw)';
+    $('#modal-fields').innerHTML = `<div class="form-grid"><div class="field"><label>Bill date *</label><input name="billDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></div><div class="field"><label>Bill no *</label><input name="billNo" required placeholder="INV-1234"></div><div class="field"><label>E-way bill no</label><input name="ewayBillNo"></div><div class="field"><label>Vendor *</label><input name="supplier" list="purchase-vendors" required><datalist id="purchase-vendors">${partyOptions}</datalist></div><div class="field"><label>Payment</label><select name="payment_status"><option value="Unpaid">On Credit Ledger</option><option value="Paid">Paid via Bank A/C</option></select></div><div class="field"><label>Location</label><input name="location" value="Main workshop" required></div></div><div style="margin-top:14px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;overflow-x:auto;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><strong>Bill items</strong><button type="button" class="secondary-btn" id="btn-add-purchase-line">＋ Add item</button></div><div style="display:grid;grid-template-columns:1.8fr .6fr .8fr .7fr .7fr .7fr .7fr auto;gap:6px;font-size:10px;color:#64748b;margin-bottom:4px;"><span>Catalogue item</span><span>Qty</span><span>Unit price</span><span>HSN</span><span>SGST %</span><span>IGST %</span><span>Other %</span><span></span></div><div id="purchase-lines">${makeRow()}</div><div id="purchase-total" style="text-align:right;font-weight:800;margin-top:10px;"></div></div>`;
+    const lines = $('#purchase-lines');
+    const recalc = () => { let taxable=0,tax=0; $$('.purchase-line', lines).forEach(l => { const base=Number(l.querySelector('[name="purchase_qty[]"]').value||0)*Number(l.querySelector('[name="purchase_price[]"]').value||0); const rate=Number(l.querySelector('[name="purchase_sgst[]"]').value||0)+Number(l.querySelector('[name="purchase_igst[]"]').value||0)+Number(l.querySelector('[name="purchase_other[]"]').value||0); taxable+=base; tax+=base*rate/100; }); $('#purchase-total').textContent=`Taxable ${formatINR(taxable)} + Tax ${formatINR(tax)} = Total ${formatINR(taxable+tax)}`; };
+    const bind = l => { l.querySelector('.purchase-item').addEventListener('change', e => { const c=state.components.find(x=>x.id===e.target.value); if(c){ l.querySelector('[name="purchase_price[]"]').value=c.price||0; l.querySelector('[name="purchase_hsn[]"]').value=c.hsn||''; l.querySelector('[name="purchase_sgst[]"]').value=c.sgstRate??0; l.querySelector('[name="purchase_igst[]"]').value=c.igstRate??0; l.querySelector('[name="purchase_other[]"]').value=c.otherTaxRate??0; } recalc(); }); l.addEventListener('input', recalc); l.querySelector('.btn-remove-purchase-line').addEventListener('click',()=>{if($$('.purchase-line',lines).length>1){l.remove();recalc();}}); };
+    bind($('.purchase-line', lines)); $('#btn-add-purchase-line').addEventListener('click',()=>{lines.insertAdjacentHTML('beforeend',makeRow());bind(lines.lastElementChild);recalc();}); recalc();
+    backdrop.removeAttribute('hidden'); backdrop.style.display='grid'; backdrop.dataset.kind='purchase-bill'; return;
   }
 
   const modalEl = $('.modal');
@@ -3695,7 +3766,7 @@ function closeModal() {
   if (modalEl) modalEl.style.width = 'min(510px, 100%)';
 }
 
-function submitModal(e) {
+async function submitModal(e) {
   e.preventDefault();
   const kind = $('#modal-backdrop').dataset.kind;
 
@@ -3840,7 +3911,8 @@ function submitModal(e) {
       category: data.category,
       spec: data.spec,
       price: Number(data.price),
-      supplier: data.supplier
+      supplier: data.supplier,
+      hsn: data.hsn || '', sgstRate: Number(data.sgstRate || 0), igstRate: Number(data.igstRate || 0), otherTaxRate: Number(data.otherTaxRate || 0)
     });
     render();
     toast(`Added ${data.name} to Master Component Catalog`);
@@ -3854,9 +3926,25 @@ function submitModal(e) {
       state.components[idx].price = Number(data.price);
       state.components[idx].spec = data.spec;
       state.components[idx].supplier = data.supplier;
+      state.components[idx].hsn = data.hsn || '';
+      state.components[idx].sgstRate = Number(data.sgstRate || 0);
+      state.components[idx].igstRate = Number(data.igstRate || 0);
+      state.components[idx].otherTaxRate = Number(data.otherTaxRate || 0);
       render();
       toast(`Updated component: ${data.name}`);
     }
+  }
+
+  if (kind === 'purchase-bill') {
+    const ids=formData.getAll('purchase_item[]'), qtys=formData.getAll('purchase_qty[]'), prices=formData.getAll('purchase_price[]'), hsns=formData.getAll('purchase_hsn[]'), sgsts=formData.getAll('purchase_sgst[]'), igsts=formData.getAll('purchase_igst[]'), others=formData.getAll('purchase_other[]');
+    const items=ids.map((id,i)=>{const c=state.components.find(x=>x.id===id)||{},qty=Number(qtys[i]||0),unitPrice=Number(prices[i]||0),taxableValue=qty*unitPrice,sgstRate=Number(sgsts[i]||0),igstRate=Number(igsts[i]||0),otherRate=Number(others[i]||0);return {componentId:id,name:c.name||id,category:c.category||'Component',qty,unitPrice,hsn:hsns[i]||c.hsn||'',sgstRate,igstRate,otherRate,taxableValue,sgstAmount:taxableValue*sgstRate/100,igstAmount:taxableValue*igstRate/100,otherAmount:taxableValue*otherRate/100};}).filter(x=>x.qty>0);
+    if(!items.length||!data.supplier||!data.billNo){toast('Add a vendor, bill number, and at least one item.');return;}
+    const taxableValue=items.reduce((s,x)=>s+x.taxableValue,0),sgstAmount=items.reduce((s,x)=>s+x.sgstAmount,0),igstAmount=items.reduce((s,x)=>s+x.igstAmount,0),otherAmount=items.reduce((s,x)=>s+x.otherAmount,0),grandTotal=taxableValue+sgstAmount+igstAmount+otherAmount,date=data.billDate||new Date().toISOString().slice(0,10),bankAccount='HDFC Bank Current A/C (50200012345678)';
+    if(!state.purchaseBills)state.purchaseBills=[]; state.purchaseBills.unshift({id:'PB-'+Date.now(),billNo:data.billNo,billDate:date,ewayBillNo:data.ewayBillNo||'',supplier:data.supplier,items,taxableValue,sgstAmount,igstAmount,otherAmount,grandTotal});
+    items.forEach((x,i)=>state.inventory.unshift({batch:`${data.billNo}-${i+1}`,material:x.name,category:x.category,supplier:data.supplier,received:date,available:`${x.qty} / ${x.qty}`,location:data.location||'Main workshop',health:'Good',unitPrice:x.unitPrice,hsn:x.hsn,gstRate:x.sgstRate+x.igstRate+x.otherRate,billNo:data.billNo,ewayBillNo:data.ewayBillNo||''}));
+    if(!state.supplierLedger)state.supplierLedger=[]; const prev=state.supplierLedger.filter(l=>normalizeText(l.supplier)===normalizeText(data.supplier)).reduce((s,l)=>s+(l.credit||0)-(l.debit||0),0); state.supplierLedger.unshift({id:'SLEDG-BILL-'+Date.now(),date,supplier:data.supplier,ref:data.billNo,desc:`Purchase Bill ${data.billNo} (${items.length} items)${data.ewayBillNo?' · E-way '+data.ewayBillNo:''}`,debit:0,credit:grandTotal,balance:prev+grandTotal,bankAccount});
+    if(data.payment_status==='Paid')state.supplierLedger.unshift({id:'SLEDG-PAY-'+Date.now(),date,supplier:data.supplier,ref:'PAY-'+data.billNo,desc:`Payment for Purchase Bill ${data.billNo}`,debit:grandTotal,credit:0,balance:prev,bankAccount});
+    saveState();render();closeModal();showView('purchase-ledger');toast(`Purchase bill ${data.billNo} saved for ${formatINR(grandTotal)}`);return;
   }
 
   if (kind === 'edit-model') {
@@ -3892,6 +3980,7 @@ function submitModal(e) {
     }).filter(Boolean);
 
     state.models.unshift({
+      code: `MODEL-${Date.now()}`,
       name: data.name,
       chemistry: data.chemistry,
       config: data.config,
@@ -4224,6 +4313,12 @@ function submitModal(e) {
       return;
     }
 
+    if (_serverOnline) {
+      const response = await fetch('/api/operations/production', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: nextProductionId(), model: data.model, operator: data.operator, qc: 'Awaiting', status: 'In QC' }) });
+      if (!response.ok) { const error = await response.json().catch(() => ({})); toast(`Production rejected: ${error.error || response.status}`); return; }
+      await refreshHostedState(); closeModal(); showView('production'); toast('Production build recorded and BOM stock consumed atomically.'); return;
+    }
+
     const newProdId = nextProductionId();
     const todayStr = new Date().toISOString().split('T')[0];
     state.production.unshift({
@@ -4324,6 +4419,19 @@ function submitModal(e) {
     const todayStr = new Date().toISOString().split('T')[0];
 
     const warrantyRuleText = isRetail ? 'Active (Same Day Auto)' : 'Dealer Auto (+1 Month)';
+
+    if (_serverOnline) {
+      const hostedInvoice = {
+        invoice: invNo, date: todayStr, party: data.party, fatherName: data.fatherName, phone: data.phone,
+        address: data.address, vehicle: data.vehicle, type: isRetail ? 'Retail' : 'Dealer', partyState,
+        taxMode, taxableValue, totalGst, cgstRate: 0, cgstAmount, sgstRate: 0, sgstAmount, igstRate: 0,
+        igstAmount, cessAmount, grandTotal, amountInWords: numberToWords(grandTotal), paidAmount,
+        balanceAmount, warrantyStatus: warrantyRuleText, items: invoiceTotals.items
+      };
+      const response = await fetch('/api/operations/sale', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ invoice: hostedInvoice }) });
+      if (!response.ok) { const error = await response.json().catch(() => ({})); toast(`Sale rejected: ${error.error || response.status}`); return; }
+      await refreshHostedState(); closeModal(); showView('sales'); toast(`Sales Invoice ${invNo} saved transactionally in Neon.`); return;
+    }
 
     // 1. Add to state.invoices
     state.invoices.unshift({
@@ -4614,6 +4722,14 @@ function submitModal(e) {
     const idx = Number(data.prodIdx);
     if (state.production[idx]) {
       const isPassed = data.qc === 'Passed';
+      if (_serverOnline) {
+        const response = await fetch('/api/operations/qc', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productionId: state.production[idx].id, qc: data.qc, serial: data.serial }) });
+        if (!response.ok) { const error = await response.json().catch(() => ({})); toast(`QC rejected: ${error.error || response.status}`); return; }
+        await refreshHostedState(); closeModal();
+        if (isPassed) { showView('lookup'); const qrSelect = $('#qr-pack-select'); if (qrSelect) qrSelect.value = data.serial; renderQrLabelPreview(data.serial); toast(`QC passed and pack ${data.serial} released.`); }
+        else { showView('production'); toast(`Production ${state.production[idx].id} marked QC failed.`); }
+        return;
+      }
       state.production[idx].qc = data.qc;
       state.production[idx].serial = data.serial;
       state.production[idx].status = isPassed ? 'Saleable' : 'QC failed';
@@ -4648,6 +4764,12 @@ function submitModal(e) {
     const regStr = isNaN(regDateObj) ? '26 Jul 2026' : regDateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     const endStr = isNaN(endDateObj) ? '26 Jul 2028' : endDateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 
+    if (_serverOnline) {
+      const response = await fetch('/api/operations/warranty', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pack: serial, customer: data.customer || 'Unassigned', registered: regStr, end: endStr, status: data.status || 'Active', allowCustom: data.pack_select === 'CUSTOM' }) });
+      if (!response.ok) { const error = await response.json().catch(() => ({})); toast(`Warranty rejected: ${error.error || response.status}`); return; }
+      await refreshHostedState(); closeModal(); showView('lookup'); const qrSelect = $('#qr-pack-select'); if (qrSelect) qrSelect.value = serial; renderQrLabelPreview(serial); toast(`Warranty activated for ${serial} until ${endStr}.`); return;
+    }
+
     // Remove existing warranty if re-registering
     state.warranties = state.warranties.filter(w => w.pack !== serial);
 
@@ -4678,6 +4800,11 @@ function submitModal(e) {
     const inheritedEndDate = data.inheritedEndDate;
 
     if (state.claims[claimIdx]) {
+      if (_serverOnline) {
+        const response = await fetch('/api/operations/claim', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'replace', claim: state.claims[claimIdx].claim, defectivePack, replacementPack, customer, inheritedEndDate }) });
+        if (!response.ok) { const error = await response.json().catch(() => ({})); toast(`Replacement rejected: ${error.error || response.status}`); return; }
+        await refreshHostedState(); closeModal(); showView('warranty'); toast(`Replacement pack ${replacementPack} issued transactionally.`); return;
+      }
       state.claims[claimIdx].status = 'Resolved';
       state.claims[claimIdx].outcome = `Replacement (${replacementPack})`;
       state.claims[claimIdx].replacedWith = replacementPack;
@@ -4715,6 +4842,12 @@ function submitModal(e) {
       const repairLabor = Number(data.repair_labor || 0);
       const repairElec = Number(data.repair_elec || 0);
       const syncSales = data.sync_sales_invoice === 'on';
+
+      if (_serverOnline && !(syncSales || data.outcome === 'Repair')) {
+        const response = await fetch('/api/operations/claim', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', claim: claim.claim, status: data.status, outcome: data.outcome, issue: data.issue, notes: data.notes, replacedComp: compName, repairLabor, repairElec }) });
+        if (!response.ok) { const error = await response.json().catch(() => ({})); toast(`Claim update rejected: ${error.error || response.status}`); return; }
+        await refreshHostedState(); closeModal(); showView('warranty'); toast(`Updated claim ${claim.claim}.`); return;
+      }
 
       claim.replacedComp = compName;
       claim.repairLabor = repairLabor;
@@ -4800,6 +4933,12 @@ function submitModal(e) {
             warrantyStatus: 'Repair Service Invoice'
           };
 
+          if (_serverOnline) {
+            const response = await fetch('/api/operations/claim', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'repair', claim: claim.claim, party: claim.customer, customerState: partyState, invoice: newInvoice, items: invoiceTotals.items, status: data.status, outcome: data.outcome, replacedComp: compName, repairLabor, repairElec, notes: data.notes }) });
+            if (!response.ok) { const error = await response.json().catch(() => ({})); toast(`Repair invoice rejected: ${error.error || response.status}`); return; }
+            await refreshHostedState(); closeModal(); showView('warranty'); toast(`Repair invoice ${repairInvoiceNo} posted transactionally.`); return;
+          }
+
           state.invoices.unshift(newInvoice);
           state.sales.unshift({
             invoice: repairInvoiceNo,
@@ -4834,6 +4973,11 @@ function submitModal(e) {
   }
 
   if (kind === 'claim') {
+    if (_serverOnline) {
+      const response = await fetch('/api/operations/claim', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'create', claim: `CLM-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`, pack: data.pack, customer: data.customer || 'Unregistered', issue: data.issue, outcome: data.outcome === 'Inspection' ? '—' : data.outcome }) });
+      if (!response.ok) { const error = await response.json().catch(() => ({})); toast(`Claim rejected: ${error.error || response.status}`); return; }
+      await refreshHostedState(); showView('warranty'); toast('Warranty claim opened transactionally.'); return;
+    }
     state.claims.unshift({ claim: 'CLM-2026-0010', pack: data.pack, customer: data.customer || 'Unregistered', issue: data.issue, opened: '25 Jul 2026', outcome: data.outcome === 'Inspection' ? '—' : data.outcome, status: 'Open' });
     render();
     showView('warranty');
@@ -5648,7 +5792,7 @@ function bind() {
   closeModal();
 
   // Check for SQLite backend and auto-migrate if needed
-  checkAndMigrate().then(() => {
+  ensureAuthenticated().then(() => checkAndMigrate()).then(() => {
     try {
       loadState();
     } catch (e) {
@@ -5864,6 +6008,11 @@ function bind() {
       openCompGstModal(idx);
       return;
     }
+
+    const editCompBtn = e.target.closest('.btn-edit-comp');
+    if (editCompBtn) { e.preventDefault(); editComponentModal(Number(editCompBtn.dataset.idx)); return; }
+    const deleteCompBtn = e.target.closest('.btn-delete-comp');
+    if (deleteCompBtn) { e.preventDefault(); const idx=Number(deleteCompBtn.dataset.idx); const comp=state.components[idx]; if(comp && confirm(`Delete ${comp.name} from the master catalogue?`)){ state.components.splice(idx,1); saveState(); render(); toast(`Deleted ${comp.name}`); } return; }
 
     const repairInvBtn = e.target.closest('.btn-create-repair-inv');
     if (repairInvBtn) {
@@ -6089,9 +6238,10 @@ function bind() {
       gstRateService: Number($('#set-gst-rate-service')?.value || 18),
       hsnBattery: $('#set-hsn-battery')?.value || '87116020',
       hsnCharger: $('#set-hsn-charger')?.value || '85044090',
-      adminPassword: $('#set-admin-password')?.value || 'ChangeMe123!'
     };
     localStorage.setItem('tejas_system_settings', JSON.stringify(settings));
+    fetch('/api/settings', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) })
+      .catch(error => console.warn('Failed to persist system settings:', error));
     toast('💾 Saved System Settings & Category Tax Rates successfully!');
   });
 
@@ -6148,22 +6298,11 @@ function bind() {
       toast('🔒 Access Denied: Only Administrators can perform factory data reset.');
       return;
     }
-    const settings = getSystemSettings();
-    const correctPass = String(settings.adminPassword || 'ChangeMe123!').trim();
-    const inputPass = prompt('🔒 SECURITY GUARD: Enter Administrator Password to authorize Factory Reset:');
-    if (inputPass === null) return; // User cancelled
-    if (inputPass.trim() !== correctPass) {
-      toast('❌ Incorrect Administrator Password. Factory Reset aborted.');
-      return;
-    }
     if (confirm('⚠️ PERMANENT ACTION WARNING:\nAre you sure you want to reset ALL system records to factory clean state? This cannot be undone.')) {
       localStorage.removeItem('voltforge_state_v3');
+      indexedDB.deleteDatabase('voltforge_offline_db');
       if (_serverOnline) {
-        fetch('/api/sync-state', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-API-Key': LITHYNOVA_API_KEY },
-          body: JSON.stringify({})
-        }).finally(() => window.location.reload());
+        fetch('/api/reset', { method: 'POST', credentials: 'same-origin' }).finally(() => window.location.reload());
       } else {
         window.location.reload();
       }
