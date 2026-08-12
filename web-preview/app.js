@@ -3746,8 +3746,9 @@ function openModal(kind) {
     <div class="form-grid">
       ${schema.fields.map(f => {
         const [name, label, type, def] = f;
+        const inputStep = type === 'number' ? '0.01' : '';
         if (type === 'select') return `<div class="field"><label for="field-${name}">${label}</label><select id="field-${name}" name="${name}">${def.map(v => `<option>${v}</option>`).join('')}</select></div>`;
-        return `<div class="field ${type === 'textarea' ? 'full' : ''}"><label for="field-${name}">${label}</label>${type === 'textarea' ? `<textarea id="field-${name}" name="${name}">${def}</textarea>` : `<input id="field-${name}" name="${name}" type="${type}" value="${def}" />`}</div>`;
+        return `<div class="field ${type === 'textarea' ? 'full' : ''}"><label for="field-${name}">${label}</label>${type === 'textarea' ? `<textarea id="field-${name}" name="${name}">${def}</textarea>` : `<input id="field-${name}" name="${name}" type="${type}" value="${def}"${inputStep ? ` step="${inputStep}"` : ''} />`}</div>`;
       }).join('')}
     </div>
   `;
