@@ -58,7 +58,7 @@
 - Build: `npm ci`
 - Start: `npm start`
 - Health check: `/api/health`
-- Required secrets: `DATABASE_URL`, `API_KEY`, and `CORS_ORIGIN` during the initial API-key phase.
+- Required secrets: `DATABASE_URL`, `SESSION_SECRET`, and `ADMIN_PASSWORD`. Set `STAFF_PASSWORD` if staff login is needed. `CORS_ORIGIN` is optional when the frontend is served by the same Render service; set it only for a separately hosted frontend.
 
 ## Neon configuration
 

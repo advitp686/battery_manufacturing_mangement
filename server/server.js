@@ -10,7 +10,7 @@ const { pool, initDatabase } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 4173;
-const CORS_ORIGIN = process.env.CORS_ORIGIN || `http://localhost:${PORT}`;
+const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
 const SESSION_SECRET = process.env.SESSION_SECRET || (process.env.NODE_ENV === 'production' ? undefined : 'local-development-session-secret');
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === 'production' ? undefined : 'ChangeMe123!');
 const STAFF_PASSWORD = process.env.STAFF_PASSWORD || (process.env.NODE_ENV === 'production' ? undefined : '');
@@ -19,8 +19,23 @@ if (process.env.NODE_ENV === 'production' && (!SESSION_SECRET || !ADMIN_PASSWORD
     throw new Error('SESSION_SECRET and ADMIN_PASSWORD must be configured in production');
 }
 
-// Middleware
-app.use(cors({ origin: CORS_ORIGIN }));
+// Render terminates TLS at its reverse proxy. Trusting the first proxy lets
+// Express recognise the original HTTPS request so express-session can set its
+// secure cookie in production.
+if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
+
+// The hosted frontend is served by this same Express process, so no CORS
+// middleware is needed unless a separate frontend origin is configured.
+if (CORS_ORIGIN) {
+    const configuredOrigins = CORS_ORIGIN.split(',').map(value => value.trim()).filter(Boolean);
+    app.use(cors({
+        origin(origin, callback) {
+            if (!origin || configuredOrigins.includes(origin)) return callback(null, true);
+            return callback(new Error('Origin is not allowed by CORS'));
+        },
+        credentials: true
+    }));
+}
 app.use(express.json({ limit: '50mb' })); // Large limit for migration payload
 app.use(session({
     store: new PgSession({ pool, tableName: 'user_sessions', createTableIfMissing: true }),
@@ -87,7 +102,7 @@ initDatabase().then(() => app.listen(PORT, '0.0.0.0', () => {
     console.log('\n⚡ Lithynova Battery Management System');
     console.log(`  Local:   http://localhost:${PORT}`);
     console.log(`  Network: http://${lanIP}:${PORT}`);
-    console.log(`  CORS Origin: ${CORS_ORIGIN}`);
+    console.log(`  CORS Origin: ${CORS_ORIGIN || 'same-origin / any origin when explicitly requested'}`);
     console.log('  Press Ctrl+C to stop\n');
 })).catch(error => {
     console.error('Database initialization failed:', error);
