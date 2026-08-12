@@ -1,7 +1,6 @@
 require('dotenv').config({ path: __dirname + '/.env' });
 const fs = require('fs');
 const path = require('path');
-const Database = require('better-sqlite3');
 const { initDatabase, withTransaction, insert, query } = require('./db');
 
 const sqlitePath = process.argv[2] || path.join(__dirname, '..', 'data', 'battery_mgmt.db');
@@ -15,8 +14,9 @@ const tables = [
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
   if (!fs.existsSync(sqlitePath)) throw new Error(`SQLite file not found: ${sqlitePath}`);
-  const sqlite = new Database(sqlitePath, { readonly: true });
-  const rows = table => sqlite.prepare(`SELECT * FROM "${table}"`).all();
+  const sqlite = await import('node:sqlite');
+  const db = new sqlite.DatabaseSync(sqlitePath, { readOnly: true });
+  const rows = table => db.prepare(`SELECT * FROM "${table}"`).all();
   const models = rows('models').map(model => ({ ...model, bom: rows('model_bom').filter(item => item.model_code === model.code) }));
   const invoices = rows('invoices').map(invoice => ({ ...invoice, items: rows('invoice_items').filter(item => item.invoice_no === invoice.invoice) }));
   const bills = rows('purchase_bills').map(bill => ({ ...bill, items: rows('purchase_bill_items').filter(item => item.bill_id === bill.id) }));
@@ -44,7 +44,7 @@ async function main() {
     for (const [key, value] of Object.entries(settings)) await insert('system_settings', { key, value: typeof value === 'object' ? JSON.stringify(value) : String(value) }, client);
     await query("INSERT INTO app_meta(key,value) VALUES ('state_version','1') ON CONFLICT(key) DO UPDATE SET value='1'", [], client);
   });
-  sqlite.close();
+  db.close();
   console.log(JSON.stringify({ success: true, source: sqlitePath, models: models.length, invoices: invoices.length, purchaseBills: bills.length }));
 }
 
