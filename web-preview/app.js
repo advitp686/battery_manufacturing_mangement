@@ -496,7 +496,7 @@ const SYSTEM_SETTINGS_KEY = 'tejas_system_settings';
 const DEFAULT_SYSTEM_SETTINGS = {
   companyName: 'HK MOTORS',
   tagline: '',
-  gstin: '',
+  gstin: '09ANLPY7318P1ZT',
   jurisdiction: 'UTTAR PRADESH',
   address: '',
   phone: '',
