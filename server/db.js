@@ -24,7 +24,7 @@ async function initDatabase() {
         CREATE TABLE IF NOT EXISTS components (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT, spec TEXT,
             price NUMERIC DEFAULT 0, supplier TEXT, hsn TEXT,
-            sgst_rate NUMERIC DEFAULT 0, igst_rate NUMERIC DEFAULT 0, other_tax_rate NUMERIC DEFAULT 0
+            cgst_rate NUMERIC DEFAULT 0, sgst_rate NUMERIC DEFAULT 0, igst_rate NUMERIC DEFAULT 0, other_tax_rate NUMERIC DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS models (
             code TEXT PRIMARY KEY, name TEXT NOT NULL, chemistry TEXT, config TEXT,
@@ -87,14 +87,14 @@ async function initDatabase() {
         );
         CREATE TABLE IF NOT EXISTS purchase_bills (
             id TEXT PRIMARY KEY, bill_no TEXT NOT NULL, bill_date TEXT, eway_bill_no TEXT, supplier TEXT,
-            taxable_value NUMERIC DEFAULT 0, sgst_amount NUMERIC DEFAULT 0, igst_amount NUMERIC DEFAULT 0,
-            other_amount NUMERIC DEFAULT 0, grand_total NUMERIC DEFAULT 0
+            taxable_value NUMERIC DEFAULT 0, cgst_amount NUMERIC DEFAULT 0, sgst_amount NUMERIC DEFAULT 0, igst_amount NUMERIC DEFAULT 0,
+            other_amount NUMERIC DEFAULT 0, vehicle_other_charges NUMERIC DEFAULT 0, tax_mode TEXT DEFAULT 'INTRA', grand_total NUMERIC DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS purchase_bill_items (
             id BIGSERIAL PRIMARY KEY, bill_id TEXT NOT NULL REFERENCES purchase_bills(id) ON DELETE CASCADE,
             component_id TEXT, name TEXT, category TEXT, qty NUMERIC, unit_price NUMERIC, hsn TEXT,
-            sgst_rate NUMERIC DEFAULT 0, igst_rate NUMERIC DEFAULT 0, other_rate NUMERIC DEFAULT 0,
-            taxable_value NUMERIC DEFAULT 0, sgst_amount NUMERIC DEFAULT 0, igst_amount NUMERIC DEFAULT 0,
+            cgst_rate NUMERIC DEFAULT 0, sgst_rate NUMERIC DEFAULT 0, igst_rate NUMERIC DEFAULT 0, other_rate NUMERIC DEFAULT 0,
+            taxable_value NUMERIC DEFAULT 0, cgst_amount NUMERIC DEFAULT 0, sgst_amount NUMERIC DEFAULT 0, igst_amount NUMERIC DEFAULT 0,
             other_amount NUMERIC DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS vehicle_models (
@@ -102,8 +102,8 @@ async function initDatabase() {
             gst_rate NUMERIC, price NUMERIC
         );
         CREATE TABLE IF NOT EXISTS vehicles (
-            chassis_no TEXT PRIMARY KEY, model TEXT, motor_no TEXT, battery_serial TEXT, color TEXT,
-            price NUMERIC, status TEXT DEFAULT 'Available in Showroom'
+            chassis_no TEXT PRIMARY KEY, model TEXT, model_no TEXT, motor_no TEXT, controller_no TEXT, battery_serial TEXT, color TEXT,
+            other_charges NUMERIC DEFAULT 0, remarks TEXT, price NUMERIC, purchase_bill_no TEXT, status TEXT DEFAULT 'Available in Showroom'
         );
         CREATE TABLE IF NOT EXISTS vehicle_invoices (
             invoice TEXT PRIMARY KEY, party TEXT, father_name TEXT, phone TEXT, address TEXT,
@@ -128,6 +128,17 @@ async function initDatabase() {
     await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS amount NUMERIC DEFAULT 0`);
     await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS "desc" TEXT`);
     await pool.query(`ALTER TABLE claims ADD COLUMN IF NOT EXISTS notes TEXT`);
+    await pool.query(`ALTER TABLE components ADD COLUMN IF NOT EXISTS cgst_rate NUMERIC DEFAULT 0`);
+    await pool.query(`ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC DEFAULT 0`);
+    await pool.query(`ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS tax_mode TEXT DEFAULT 'INTRA'`);
+    await pool.query(`ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS vehicle_other_charges NUMERIC DEFAULT 0`);
+    await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS cgst_rate NUMERIC DEFAULT 0`);
+    await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC DEFAULT 0`);
+    await pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS model_no TEXT`);
+    await pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS controller_no TEXT`);
+    await pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS other_charges NUMERIC DEFAULT 0`);
+    await pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS remarks TEXT`);
+    await pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS purchase_bill_no TEXT`);
     await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS id BIGSERIAL`);
     await pool.query(`ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_pkey`);
     await pool.query(`ALTER TABLE sales ADD CONSTRAINT sales_pkey PRIMARY KEY (id)`);

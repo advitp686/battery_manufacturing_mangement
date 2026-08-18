@@ -1160,7 +1160,7 @@ function render() {
             <td>${c.spec}</td>
             <td><strong style="color:#2f855a">${formatINR(c.price)}</strong></td>
             <td>${c.supplier}</td>
-            <td><small>HSN ${c.hsn || '—'}</small><br><small>${c.sgstRate || 0}% SGST · ${c.igstRate || 0}% IGST · ${c.otherTaxRate || 0}% Other</small></td>
+            <td><small>HSN ${c.hsn || '—'}</small><br><small>${c.cgstRate || 0}% CGST · ${c.sgstRate || 0}% SGST · ${c.igstRate || 0}% IGST · ${c.otherTaxRate || 0}% Other</small></td>
             <td>${modelsUsing.length > 0 ? `<span class="badge neutral">${modelsUsing.length} models</span>` : '<span style="color:#a0aec0">Unassigned</span>'}</td>
             <td><div style="display:flex;gap:5px;flex-wrap:wrap;"><button class="secondary-btn btn-edit-comp" data-idx="${idx}" style="padding:4px 10px;font-size:11px;">✎ Edit</button><button class="secondary-btn btn-delete-comp" data-idx="${idx}" style="padding:4px 10px;font-size:11px;color:#c53030;background:#fff5f5;">Delete</button></div></td>
           </tr>
@@ -1997,6 +1997,7 @@ function editComponentModal(compIdx) {
       <div class="field full"><label>Specifications</label><input name="spec" value="${comp.spec}" required /></div>
       <div class="field full"><label>Default Supplier</label><input name="supplier" value="${comp.supplier}" required /></div>
       <div class="field"><label>HSN Code</label><input name="hsn" value="${comp.hsn || ''}" /></div>
+      <div class="field"><label>CGST Rate (%)</label><input name="cgstRate" type="number" step="0.01" value="${comp.cgstRate ?? 0}" /></div>
       <div class="field"><label>SGST Rate (%)</label><input name="sgstRate" type="number" step="0.01" value="${comp.sgstRate ?? 0}" /></div>
       <div class="field"><label>IGST Rate (%)</label><input name="igstRate" type="number" step="0.01" value="${comp.igstRate ?? 0}" /></div>
       <div class="field"><label>Other Tax/Cess (%)</label><input name="otherTaxRate" type="number" step="0.01" value="${comp.otherTaxRate ?? 0}" /></div>
@@ -2545,6 +2546,7 @@ const modalSchemas = {
       ['spec', 'Specifications', 'text', '16S 48V 100A UART/CAN'],
       ['supplier', 'Default supplier', 'text', 'Daly Electronics'],
       ['hsn', 'HSN code', 'text', '85076000'],
+      ['cgstRate', 'CGST rate (%)', 'number', '2.5'],
       ['sgstRate', 'SGST rate (%)', 'number', '2.5'],
       ['igstRate', 'IGST rate (%)', 'number', '5'],
       ['otherTaxRate', 'Other tax/cess (%)', 'number', '0']
@@ -3149,13 +3151,14 @@ function openModal(kind) {
   if (kind === 'purchase-bill') {
     const partyOptions = [...(state.suppliers || []), ...(state.dealers || [])].map(s => `<option value="${s.name}">${s.name}</option>`).join('');
     const itemOptions = (state.components || []).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-    const makeRow = (c = state.components?.[0] || {}) => `<div class="purchase-line" style="display:grid;grid-template-columns:1.8fr .6fr .8fr .7fr .7fr .7fr .7fr auto;gap:6px;align-items:end;margin-bottom:7px;"><select name="purchase_item[]" class="purchase-item">${itemOptions}</select><input name="purchase_qty[]" type="number" min="0.01" step="0.01" value="1"><input name="purchase_price[]" type="number" min="0" step="0.01" value="${c.price || 0}"><input name="purchase_hsn[]" value="${c.hsn || ''}"><input name="purchase_sgst[]" type="number" step="0.01" value="${c.sgstRate ?? 0}"><input name="purchase_igst[]" type="number" step="0.01" value="${c.igstRate ?? 0}"><input name="purchase_other[]" type="number" step="0.01" value="${c.otherTaxRate ?? 0}"><button type="button" class="secondary-btn btn-remove-purchase-line" style="padding:7px;color:#c53030;">×</button></div>`;
+    const makeRow = (c = state.components?.[0] || {}) => `<div class="purchase-line" style="display:grid;grid-template-columns:1.8fr .55fr .8fr .7fr .7fr .7fr .7fr .7fr auto;gap:6px;align-items:end;margin-bottom:7px;"><select name="purchase_item[]" class="purchase-item">${itemOptions}</select><input name="purchase_qty[]" type="number" min="0.01" step="0.01" value="1"><input name="purchase_price[]" type="number" min="0" step="0.01" value="${c.price || 0}"><input name="purchase_hsn[]" value="${c.hsn || ''}"><input name="purchase_cgst[]" type="number" step="0.01" value="${c.cgstRate ?? 0}"><input name="purchase_sgst[]" type="number" step="0.01" value="${c.sgstRate ?? 0}"><input name="purchase_igst[]" type="number" step="0.01" value="${c.igstRate ?? 0}"><input name="purchase_other[]" type="number" step="0.01" value="${c.otherTaxRate ?? 0}"><button type="button" class="secondary-btn btn-remove-purchase-line" style="padding:7px;color:#c53030;">×</button></div>`;
     $('#modal-title').textContent = 'Enter Purchase Bill (Multi-Item)';
     $('.modal').style.width = 'min(980px, 96vw)';
-    $('#modal-fields').innerHTML = `<div class="form-grid"><div class="field"><label>Bill date *</label><input name="billDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></div><div class="field"><label>Bill no *</label><input name="billNo" required placeholder="INV-1234"></div><div class="field"><label>E-way bill no</label><input name="ewayBillNo"></div><div class="field"><label>Vendor *</label><input name="supplier" list="purchase-vendors" required><datalist id="purchase-vendors">${partyOptions}</datalist></div><div class="field"><label>Payment</label><select name="payment_status"><option value="Unpaid">On Credit Ledger</option><option value="Paid">Paid via Bank A/C</option></select></div><div class="field"><label>Location</label><input name="location" value="Main workshop" required></div></div><div style="margin-top:14px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;overflow-x:auto;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><strong>Bill items</strong><button type="button" class="secondary-btn" id="btn-add-purchase-line">＋ Add item</button></div><div style="display:grid;grid-template-columns:1.8fr .6fr .8fr .7fr .7fr .7fr .7fr auto;gap:6px;font-size:10px;color:#64748b;margin-bottom:4px;"><span>Catalogue item</span><span>Qty</span><span>Unit price</span><span>HSN</span><span>SGST %</span><span>IGST %</span><span>Other %</span><span></span></div><div id="purchase-lines">${makeRow()}</div><div id="purchase-total" style="text-align:right;font-weight:800;margin-top:10px;"></div></div>`;
+    $('#modal-fields').innerHTML = `<div class="form-grid"><div class="field"><label>Bill date *</label><input name="billDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></div><div class="field"><label>Bill no *</label><input name="billNo" required placeholder="INV-1234"></div><div class="field"><label>E-way bill no</label><input name="ewayBillNo"></div><div class="field"><label>Vendor *</label><input name="supplier" list="purchase-vendors" required><datalist id="purchase-vendors">${partyOptions}</datalist></div><div class="field"><label>Payment</label><select name="payment_status"><option value="Unpaid">On Credit Ledger</option><option value="Paid">Paid via Bank A/C</option></select></div><div class="field"><label>Location</label><input name="location" value="Main workshop" required></div><div class="field"><label>Tax treatment</label><select name="tax_mode" id="purchase-tax-mode"><option value="INTRA">Intra-state (CGST + SGST)</option><option value="INTER">Inter-state (IGST)</option></select></div><div class="field"><label>Purchase type</label><select name="purchase_type" id="purchase-type"><option value="components">Components / materials</option><option value="vehicle">Complete vehicle</option></select></div></div><div id="vehicle-purchase-fields" hidden style="margin-top:14px;padding:12px;background:#fffaf0;border:1px solid #f6ad55;border-radius:8px;"><strong>Vehicle purchase details</strong><div class="form-grid" style="margin-top:8px;"><div class="field"><label>Model number *</label><input name="vehicle_model_no"></div><div class="field"><label>Chassis number *</label><input name="vehicle_chassis_no"></div><div class="field"><label>Motor number *</label><input name="vehicle_motor_no"></div><div class="field"><label>Controller number</label><input name="vehicle_controller_no"></div><div class="field"><label>Battery number</label><input name="vehicle_battery_no"></div><div class="field"><label>Vehicle color</label><input name="vehicle_color"></div><div class="field"><label>Other charges (₹)</label><input name="vehicle_other_charges" type="number" min="0" step="0.01" value="0"></div><div class="field full"><label>Remarks</label><textarea name="vehicle_remarks" placeholder="Condition, accessories, registration or supplier notes"></textarea></div></div></div><div style="margin-top:14px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;overflow-x:auto;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><strong>Bill items</strong><button type="button" class="secondary-btn" id="btn-add-purchase-line">＋ Add item</button></div><div style="display:grid;grid-template-columns:1.8fr .55fr .8fr .7fr .7fr .7fr .7fr .7fr auto;gap:6px;font-size:10px;color:#64748b;margin-bottom:4px;"><span>Catalogue item</span><span>Qty</span><span>Unit price</span><span>HSN</span><span>CGST %</span><span>SGST %</span><span>IGST %</span><span>Other %</span><span></span></div><div id="purchase-lines">${makeRow()}</div><div id="purchase-total" style="text-align:right;font-weight:800;margin-top:10px;"></div></div>`;
     const lines = $('#purchase-lines');
-    const recalc = () => { let taxable=0,tax=0; $$('.purchase-line', lines).forEach(l => { const base=Number(l.querySelector('[name="purchase_qty[]"]').value||0)*Number(l.querySelector('[name="purchase_price[]"]').value||0); const rate=Number(l.querySelector('[name="purchase_sgst[]"]').value||0)+Number(l.querySelector('[name="purchase_igst[]"]').value||0)+Number(l.querySelector('[name="purchase_other[]"]').value||0); taxable+=base; tax+=base*rate/100; }); $('#purchase-total').textContent=`Taxable ${formatINR(taxable)} + Tax ${formatINR(tax)} = Total ${formatINR(taxable+tax)}`; };
-    const bind = l => { l.querySelector('.purchase-item').addEventListener('change', e => { const c=state.components.find(x=>x.id===e.target.value); if(c){ l.querySelector('[name="purchase_price[]"]').value=c.price||0; l.querySelector('[name="purchase_hsn[]"]').value=c.hsn||''; l.querySelector('[name="purchase_sgst[]"]').value=c.sgstRate??0; l.querySelector('[name="purchase_igst[]"]').value=c.igstRate??0; l.querySelector('[name="purchase_other[]"]').value=c.otherTaxRate??0; } recalc(); }); l.addEventListener('input', recalc); l.querySelector('.btn-remove-purchase-line').addEventListener('click',()=>{if($$('.purchase-line',lines).length>1){l.remove();recalc();}}); };
+    const recalc = () => { let taxable=0,tax=0; const mode=$('#purchase-tax-mode').value; $$('.purchase-line', lines).forEach(l => { const base=Number(l.querySelector('[name="purchase_qty[]"]').value||0)*Number(l.querySelector('[name="purchase_price[]"]').value||0); const rate=mode==='INTER' ? Number(l.querySelector('[name="purchase_igst[]"]').value||0) : Number(l.querySelector('[name="purchase_cgst[]"]').value||0)+Number(l.querySelector('[name="purchase_sgst[]"]').value||0); taxable+=base; tax+=base*(rate+Number(l.querySelector('[name="purchase_other[]"]').value||0))/100; }); const extra=$('#purchase-type').value==='vehicle'?Number($('[name="vehicle_other_charges"]').value||0):0; $('#purchase-total').textContent=`Taxable ${formatINR(taxable)} + Tax ${formatINR(tax)} + Other charges ${formatINR(extra)} = Total ${formatINR(taxable+tax+extra)}`; };
+    const bind = l => { l.querySelector('.purchase-item').addEventListener('change', e => { const c=state.components.find(x=>x.id===e.target.value); if(c){ l.querySelector('[name="purchase_price[]"]').value=c.price||0; l.querySelector('[name="purchase_hsn[]"]').value=c.hsn||''; l.querySelector('[name="purchase_cgst[]"]').value=c.cgstRate ?? 0; l.querySelector('[name="purchase_sgst[]"]').value=c.sgstRate??0; l.querySelector('[name="purchase_igst[]"]').value=c.igstRate??0; l.querySelector('[name="purchase_other[]"]').value=c.otherTaxRate??0; } recalc(); }); l.addEventListener('input', recalc); l.querySelector('.btn-remove-purchase-line').addEventListener('click',()=>{if($$('.purchase-line',lines).length>1){l.remove();recalc();}}); };
+    $('#purchase-type').addEventListener('change', e => { $('#vehicle-purchase-fields').hidden=e.target.value!=='vehicle'; recalc(); }); $('#purchase-tax-mode').addEventListener('change', recalc);
     bind($('.purchase-line', lines)); $('#btn-add-purchase-line').addEventListener('click',()=>{lines.insertAdjacentHTML('beforeend',makeRow());bind(lines.lastElementChild);recalc();}); recalc();
     backdrop.removeAttribute('hidden'); backdrop.style.display='grid'; backdrop.dataset.kind='purchase-bill'; return;
   }
@@ -3913,7 +3916,7 @@ async function submitModal(e) {
       spec: data.spec,
       price: Number(data.price),
       supplier: data.supplier,
-      hsn: data.hsn || '', sgstRate: Number(data.sgstRate || 0), igstRate: Number(data.igstRate || 0), otherTaxRate: Number(data.otherTaxRate || 0)
+      hsn: data.hsn || '', cgstRate: Number(data.cgstRate || 0), sgstRate: Number(data.sgstRate || 0), igstRate: Number(data.igstRate || 0), otherTaxRate: Number(data.otherTaxRate || 0)
     });
     render();
     toast(`Added ${data.name} to Master Component Catalog`);
@@ -3928,6 +3931,7 @@ async function submitModal(e) {
       state.components[idx].spec = data.spec;
       state.components[idx].supplier = data.supplier;
       state.components[idx].hsn = data.hsn || '';
+      state.components[idx].cgstRate = Number(data.cgstRate || 0);
       state.components[idx].sgstRate = Number(data.sgstRate || 0);
       state.components[idx].igstRate = Number(data.igstRate || 0);
       state.components[idx].otherTaxRate = Number(data.otherTaxRate || 0);
@@ -3937,15 +3941,18 @@ async function submitModal(e) {
   }
 
   if (kind === 'purchase-bill') {
-    const ids=formData.getAll('purchase_item[]'), qtys=formData.getAll('purchase_qty[]'), prices=formData.getAll('purchase_price[]'), hsns=formData.getAll('purchase_hsn[]'), sgsts=formData.getAll('purchase_sgst[]'), igsts=formData.getAll('purchase_igst[]'), others=formData.getAll('purchase_other[]');
-    const items=ids.map((id,i)=>{const c=state.components.find(x=>x.id===id)||{},qty=Number(qtys[i]||0),unitPrice=Number(prices[i]||0),taxableValue=qty*unitPrice,sgstRate=Number(sgsts[i]||0),igstRate=Number(igsts[i]||0),otherRate=Number(others[i]||0);return {componentId:id,name:c.name||id,category:c.category||'Component',qty,unitPrice,hsn:hsns[i]||c.hsn||'',sgstRate,igstRate,otherRate,taxableValue,sgstAmount:taxableValue*sgstRate/100,igstAmount:taxableValue*igstRate/100,otherAmount:taxableValue*otherRate/100};}).filter(x=>x.qty>0);
+    const ids=formData.getAll('purchase_item[]'), qtys=formData.getAll('purchase_qty[]'), prices=formData.getAll('purchase_price[]'), hsns=formData.getAll('purchase_hsn[]'), cgsts=formData.getAll('purchase_cgst[]'), sgsts=formData.getAll('purchase_sgst[]'), igsts=formData.getAll('purchase_igst[]'), others=formData.getAll('purchase_other[]');
+    const taxMode=data.tax_mode||'INTRA';
+    const items=ids.map((id,i)=>{const c=state.components.find(x=>x.id===id)||{},qty=Number(qtys[i]||0),unitPrice=Number(prices[i]||0),taxableValue=qty*unitPrice,cgstRate=taxMode==='INTER'?0:Number(cgsts[i]||0),sgstRate=taxMode==='INTER'?0:Number(sgsts[i]||0),igstRate=taxMode==='INTER'?Number(igsts[i]||0):0,otherRate=Number(others[i]||0);return {componentId:id,name:c.name||id,category:c.category||'Component',qty,unitPrice,hsn:hsns[i]||c.hsn||'',cgstRate,sgstRate,igstRate,otherRate,taxableValue,cgstAmount:taxableValue*cgstRate/100,sgstAmount:taxableValue*sgstRate/100,igstAmount:taxableValue*igstRate/100,otherAmount:taxableValue*otherRate/100};}).filter(x=>x.qty>0);
     if(!items.length||!data.supplier||!data.billNo){toast('Add a vendor, bill number, and at least one item.');return;}
-    const taxableValue=items.reduce((s,x)=>s+x.taxableValue,0),sgstAmount=items.reduce((s,x)=>s+x.sgstAmount,0),igstAmount=items.reduce((s,x)=>s+x.igstAmount,0),otherAmount=items.reduce((s,x)=>s+x.otherAmount,0),grandTotal=taxableValue+sgstAmount+igstAmount+otherAmount,date=data.billDate||new Date().toISOString().slice(0,10),bankAccount='HDFC Bank Current A/C (50200012345678)';
-    if(!state.purchaseBills)state.purchaseBills=[]; state.purchaseBills.unshift({id:'PB-'+Date.now(),billNo:data.billNo,billDate:date,ewayBillNo:data.ewayBillNo||'',supplier:data.supplier,items,taxableValue,sgstAmount,igstAmount,otherAmount,grandTotal});
+    const taxableValue=items.reduce((s,x)=>s+x.taxableValue,0),cgstAmount=items.reduce((s,x)=>s+x.cgstAmount,0),sgstAmount=items.reduce((s,x)=>s+x.sgstAmount,0),igstAmount=items.reduce((s,x)=>s+x.igstAmount,0),otherAmount=items.reduce((s,x)=>s+x.otherAmount,0),vehicleOtherCharges=data.purchase_type==='vehicle'?Number(data.vehicle_other_charges||0):0,grandTotal=taxableValue+cgstAmount+sgstAmount+igstAmount+otherAmount+vehicleOtherCharges,date=data.billDate||new Date().toISOString().slice(0,10),bankAccount='HDFC Bank Current A/C (50200012345678)',billId='PB-'+Date.now();
+    if(data.purchase_type==='vehicle' && (!data.vehicle_chassis_no||!data.vehicle_model_no||!data.vehicle_motor_no)){toast('Vehicle purchase requires model, chassis, and motor numbers.');return;}
+    if(!state.purchaseBills)state.purchaseBills=[]; state.purchaseBills.unshift({id:billId,billNo:data.billNo,billDate:date,ewayBillNo:data.ewayBillNo||'',supplier:data.supplier,taxMode,cgstAmount,sgstAmount,igstAmount,otherAmount,vehicleOtherCharges,grandTotal,items});
     items.forEach((x,i)=>state.inventory.unshift({batch:`${data.billNo}-${i+1}`,material:x.name,category:x.category,supplier:data.supplier,received:date,available:`${x.qty} / ${x.qty}`,location:data.location||'Main workshop',health:'Good',unitPrice:x.unitPrice,hsn:x.hsn,gstRate:x.sgstRate+x.igstRate+x.otherRate,billNo:data.billNo,ewayBillNo:data.ewayBillNo||''}));
     if(!state.supplierLedger)state.supplierLedger=[]; const prev=state.supplierLedger.filter(l=>normalizeText(l.supplier)===normalizeText(data.supplier)).reduce((s,l)=>s+(l.credit||0)-(l.debit||0),0); state.supplierLedger.unshift({id:'SLEDG-BILL-'+Date.now(),date,supplier:data.supplier,ref:data.billNo,desc:`Purchase Bill ${data.billNo} (${items.length} items)${data.ewayBillNo?' · E-way '+data.ewayBillNo:''}`,debit:0,credit:grandTotal,balance:prev+grandTotal,bankAccount});
     if(data.payment_status==='Paid')state.supplierLedger.unshift({id:'SLEDG-PAY-'+Date.now(),date,supplier:data.supplier,ref:'PAY-'+data.billNo,desc:`Payment for Purchase Bill ${data.billNo}`,debit:grandTotal,credit:0,balance:prev,bankAccount});
-    saveState();render();closeModal();showView('purchase-ledger');toast(`Purchase bill ${data.billNo} saved for ${formatINR(grandTotal)}`);return;
+    if(data.purchase_type==='vehicle'){ if(!state.vehicles)state.vehicles=[]; state.vehicles.unshift({chassisNo:data.vehicle_chassis_no,model:data.vehicle_model_no,modelNo:data.vehicle_model_no,motorNo:data.vehicle_motor_no,controllerNo:data.vehicle_controller_no||'',batterySerial:data.vehicle_battery_no||'',color:data.vehicle_color||'',otherCharges:vehicleOtherCharges,remarks:data.vehicle_remarks||'',price:grandTotal,purchaseBillNo:data.billNo,status:'Available in Showroom'}); }
+    saveState();render();closeModal();showView(data.purchase_type==='vehicle'?'vehicles':'purchase-ledger');toast(`${data.purchase_type==='vehicle'?'Vehicle purchase':'Purchase bill'} ${data.billNo} saved for ${formatINR(grandTotal)}`);return;
   }
 
   if (kind === 'edit-model') {
@@ -4177,9 +4184,13 @@ async function submitModal(e) {
     const newVeh = {
       chassisNo: data.chassisNo,
       model: data.model,
+      modelNo: data.modelNo || '',
       motorNo: data.motorNo || 'MTR-BLDC-001',
+      controllerNo: data.controllerNo || '',
       batterySerial: data.batterySerial || 'LFP 51.2V 100Ah',
       color: data.color || 'Royal Blue',
+      otherCharges: Number(data.otherCharges || 0),
+      remarks: data.remarks || '',
       price: Number(data.price || 145000),
       status: 'Available in Showroom'
     };
@@ -5689,9 +5700,13 @@ function openAddVehicleStockModal() {
     <div class="form-grid">
       <div class="field full"><label style="font-weight:700;">Select Vehicle Model *</label><select name="model" id="veh-stock-model-select">${modelOptions}</select></div>
       <div class="field"><label style="font-weight:700;">Chassis / VIN Number *</label><input name="chassisNo" value="CHASSIS-DELTIC-2026-${Date.now().toString().slice(-4)}" required /></div>
+      <div class="field"><label style="font-weight:700;">Model Number</label><input name="modelNo" placeholder="e.g. L5-2026" /></div>
       <div class="field"><label style="font-weight:700;">Motor Serial Number *</label><input name="motorNo" value="MTR-1200W-${Date.now().toString().slice(-4)}" required /></div>
+      <div class="field"><label style="font-weight:700;">Controller Number</label><input name="controllerNo" /></div>
       <div class="field"><label style="font-weight:700;">Battery Serial Installed</label><select name="batterySerial">${batteryOptions}</select></div>
       <div class="field"><label style="font-weight:700;">Vehicle Color</label><input name="color" value="Glossy Royal Blue" /></div>
+      <div class="field"><label style="font-weight:700;">Other Charges (₹)</label><input name="otherCharges" type="number" min="0" step="0.01" value="0" /></div>
+      <div class="field full"><label style="font-weight:700;">Remarks</label><textarea name="remarks"></textarea></div>
       <div class="field full"><label style="font-weight:700;">Retail Ex-Showroom Price (₹) *</label><input name="price" id="veh-stock-price" type="number" value="145000" style="font-weight:800;" required /></div>
     </div>
   `;
