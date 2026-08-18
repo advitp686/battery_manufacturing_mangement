@@ -86,7 +86,7 @@ async function initDatabase() {
             debit NUMERIC DEFAULT 0, credit NUMERIC DEFAULT 0, balance NUMERIC DEFAULT 0, bank_account TEXT
         );
         CREATE TABLE IF NOT EXISTS purchase_bills (
-            id TEXT PRIMARY KEY, bill_no TEXT NOT NULL, bill_date TEXT, eway_bill_no TEXT, supplier TEXT,
+            id TEXT PRIMARY KEY, bill_no TEXT NOT NULL, bill_date TEXT, eway_bill_no TEXT, supplier TEXT, vendor_gstin TEXT,
             taxable_value NUMERIC DEFAULT 0, cgst_amount NUMERIC DEFAULT 0, sgst_amount NUMERIC DEFAULT 0, igst_amount NUMERIC DEFAULT 0,
             other_amount NUMERIC DEFAULT 0, vehicle_other_charges NUMERIC DEFAULT 0, tax_mode TEXT DEFAULT 'INTRA', grand_total NUMERIC DEFAULT 0
         );
@@ -132,6 +132,7 @@ async function initDatabase() {
     await pool.query(`ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC DEFAULT 0`);
     await pool.query(`ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS tax_mode TEXT DEFAULT 'INTRA'`);
     await pool.query(`ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS vehicle_other_charges NUMERIC DEFAULT 0`);
+    await pool.query(`ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS vendor_gstin TEXT`);
     await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS cgst_rate NUMERIC DEFAULT 0`);
     await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC DEFAULT 0`);
     await pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS model_no TEXT`);
