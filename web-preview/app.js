@@ -5601,18 +5601,20 @@ function renderLedger() {
   let runningBalance = 0;
 
   const statementRowsHtml = partyEntries.map(e => {
-    totalDebit += (e.debit || 0);
-    totalCredit += (e.credit || 0);
-    runningBalance += ((e.debit || 0) - (e.credit || 0));
-    const bankAcc = e.bankAccount || (e.credit > 0 ? 'HDFC Bank Current A/C (50200012345678)' : 'Sales Invoice Debit');
+    const debit = Number(e.debit) || 0;
+    const credit = Number(e.credit) || 0;
+    totalDebit += debit;
+    totalCredit += credit;
+    runningBalance += debit - credit;
+    const bankAcc = e.bankAccount || (credit > 0 ? 'HDFC Bank Current A/C (50200012345678)' : 'Sales Invoice Debit');
 
     return `
       <tr>
         <td>${e.date}</td>
         <td><strong>${e.ref}</strong></td>
         <td>${e.desc}</td>
-        <td style="text-align:right;color:#1e293b;">${e.debit ? '₹ ' + e.debit.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—'}</td>
-        <td style="text-align:right;color:#16a34a;">${e.credit ? '₹ ' + e.credit.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—'}</td>
+        <td style="text-align:right;color:#1e293b;">${debit ? '₹ ' + debit.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—'}</td>
+        <td style="text-align:right;color:#16a34a;">${credit ? '₹ ' + credit.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—'}</td>
         <td style="text-align:right;font-weight:700;color:${runningBalance > 0 ? '#dc2626' : '#16a34a'};">₹ ${runningBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
         <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${bankAcc}</span></td>
       </tr>
