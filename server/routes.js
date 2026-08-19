@@ -231,6 +231,53 @@ router.post('/api/operations/sale', asyncRoute(async (req, res) => {
     res.status(201).json({ success: true, invoice: invoice.invoice });
 }));
 
+router.post('/api/operations/vehicle-sale', asyncRoute(async (req, res) => {
+    const invoice = req.body || {};
+    const grandTotal = Number(invoice.grandTotal);
+    const paidAmount = Number(invoice.paidAmount || 0);
+    if (!invoice.invoice || !invoice.party || !invoice.chassisNo || !Number.isFinite(grandTotal) || grandTotal <= 0) {
+        throw badRequest('Vehicle invoice, party, chassis number, and a positive total are required');
+    }
+    if (!Number.isFinite(paidAmount) || paidAmount < 0 || paidAmount > grandTotal) {
+        throw badRequest('Vehicle payment must be between zero and the invoice total');
+    }
+    await withTransaction(async client => {
+        const vehicle = (await query('SELECT * FROM vehicles WHERE chassis_no = $1 FOR UPDATE', [invoice.chassisNo], client)).rows[0];
+        if (!vehicle) throw operationError(`Vehicle not found: ${invoice.chassisNo}`, 422);
+        if (vehicle.status !== 'Available in Showroom') throw operationError(`Vehicle ${invoice.chassisNo} is not available for sale`, 409);
+        const duplicate = (await query('SELECT 1 FROM vehicle_invoices WHERE invoice = $1', [invoice.invoice], client)).rows[0];
+        if (duplicate) throw operationError(`Vehicle invoice already exists: ${invoice.invoice}`, 409);
+
+        await insert('vehicle_invoices', { ...invoice, grandTotal, paidAmount, balanceAmount: grandTotal - paidAmount }, client);
+        await query("UPDATE vehicles SET status = 'Sold & Dispatched' WHERE chassis_no = $1", [invoice.chassisNo], client);
+        await insert('ledger', {
+            id: `LEDG-${crypto.randomUUID()}`,
+            date: invoice.date,
+            party: invoice.party,
+            partyType: invoice.type,
+            ref: invoice.invoice,
+            desc: `EV Vehicle Tax Invoice ${invoice.invoice} (${invoice.model} · Chassis ${invoice.chassisNo})`,
+            debit: grandTotal,
+            credit: 0,
+            balance: grandTotal,
+            bankAccount: invoice.bankAccount
+        }, client);
+        if (paidAmount > 0) await insert('ledger', {
+            id: `LEDG-${crypto.randomUUID()}`,
+            date: invoice.date,
+            party: invoice.party,
+            partyType: invoice.type,
+            ref: `PAY-${invoice.invoice}`,
+            desc: `Vehicle Payment Received via ${invoice.bankAccount || 'Bank Account'}`,
+            debit: 0,
+            credit: paidAmount,
+            balance: grandTotal - paidAmount,
+            bankAccount: invoice.bankAccount
+        }, client);
+    });
+    res.status(201).json({ success: true, invoice: invoice.invoice, chassisNo: invoice.chassisNo });
+}));
+
 router.post('/api/operations/qc', asyncRoute(async (req, res) => {
     const { productionId, qc, serial } = req.body || {};
     if (!productionId || !['Passed', 'Failed'].includes(qc)) throw badRequest('Production ID and valid QC result are required');
@@ -276,6 +323,10 @@ router.post('/api/operations/claim', asyncRoute(async (req, res) => {
         const { claim, defectivePack, replacementPack, customer, inheritedEndDate } = data;
         if (!claim || !defectivePack || !replacementPack) throw badRequest('Claim and both pack serials are required');
         await withTransaction(async client => {
+            const existingClaim = (await query('SELECT * FROM claims WHERE claim = $1 FOR UPDATE', [claim], client)).rows[0];
+            if (!existingClaim) throw operationError(`Claim not found: ${claim}`, 404);
+            if (existingClaim.pack !== defectivePack) throw operationError('Defective pack does not match the warranty claim', 422);
+            if (existingClaim.status === 'Resolved') throw operationError(`Claim ${claim} is already resolved`, 409);
             const replacement = (await query('SELECT status FROM production WHERE serial = $1 FOR UPDATE', [replacementPack], client)).rows[0];
             if (!replacement || !['Saleable', 'Dealer stock'].includes(replacement.status)) throw operationError(`Replacement pack is not available: ${replacementPack}`, 422);
             await query('UPDATE claims SET status=$1,outcome=$2,replaced_with=$3 WHERE claim=$4', ['Resolved', `Replacement (${replacementPack})`, replacementPack, claim], client);

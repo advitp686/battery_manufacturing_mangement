@@ -327,6 +327,7 @@ const state = {
 // Authentication is handled by an HttpOnly server session. No API secret is shipped to the browser.
 let _serverOnline = false;
 let _syncDebounceTimer = null;
+let _lastServerState = null;
 
 async function ensureAuthenticated() {
   const me = await fetch('/api/auth/me', { credentials: 'same-origin' }).then(r => r.json());
@@ -543,6 +544,10 @@ function roundMoney(value) {
   return Math.round((Number(value) || 0) * 100) / 100;
 }
 
+function ledgerMoney(value) {
+  return roundMoney(value);
+}
+
 function defaultGstRateForItem(item = {}, saleType = '') {
   const settings = getSystemSettings();
   const text = `${item.category || ''} ${item.desc || ''} ${item.description || ''} ${saleType || ''}`.toLowerCase();
@@ -736,8 +741,8 @@ function cancelSalesInvoice(invNo, reason = 'User requested cancellation') {
   let debitSum = 0;
   let creditSum = 0;
   state.ledger.filter(l => normalizeText(l.party) === partyKey).forEach(l => {
-    debitSum += (l.debit || 0);
-    creditSum += (l.credit || 0);
+  debitSum += ledgerMoney(l.debit);
+  creditSum += ledgerMoney(l.credit);
   });
 
   state.ledger.unshift({
@@ -882,15 +887,26 @@ function syncStateToServer() {
       if (res.status === 409) toast('This data changed elsewhere. Reload before saving to avoid overwriting it.');
       const error = await res.json().catch(() => ({}));
       console.warn('[Postgres] Sync failed:', res.status, error.error || '');
+      if (res.status !== 409) toast('Save failed on the hosted database. The unposted change was reverted.');
+      if (_lastServerState) {
+        restoreStateSnapshot(_lastServerState);
+        try { render(); } catch (e) {}
+      }
       return { ok: false, status: res.status, error: error.error || `HTTP ${res.status}` };
     }
     const result = await res.json();
     if (result?.version !== undefined) state._syncVersion = result.version;
+    _lastServerState = JSON.stringify(state);
     return { ok: true, version: result?.version };
   }).catch(e => {
     console.warn('[Postgres] Sync error, server may be offline:', e.message);
     _serverOnline = false;
+    if (_lastServerState) {
+      restoreStateSnapshot(_lastServerState);
+      try { render(); } catch (renderError) {}
+    }
     showOfflineBanner();
+    toast('Save failed because the hosted database is unreachable. The unposted change was reverted.');
     return { ok: false, error: e.message };
   });
 }
@@ -1061,6 +1077,7 @@ function loadState() {
         saveStateToDB(state);
         console.log('[Postgres] Server is empty; cleared local seeded state.');
       }
+      _lastServerState = JSON.stringify(state);
     }
     try { render(); } catch (e) {}
     updateDatabaseMetricsUI();
@@ -1098,6 +1115,7 @@ async function refreshHostedState() {
   if (serverState.settings && typeof serverState.settings === 'object') localStorage.setItem(SYSTEM_SETTINGS_KEY, JSON.stringify(serverState.settings));
   localStorage.setItem('voltforge_state_v3', JSON.stringify(state));
   saveStateToDB(state);
+  _lastServerState = JSON.stringify(state);
   render();
 }
 
@@ -1677,7 +1695,7 @@ function downloadPartyLedgerCSV(partyName) {
 
   let balance = 0;
   entries.forEach(e => {
-    balance += ((e.debit || 0) - (e.credit || 0));
+      balance += (ledgerMoney(e.debit) - ledgerMoney(e.credit));
     rows.push([
       e.date || '',
       e.ref || '',
@@ -1711,7 +1729,7 @@ function downloadSupplierLedgerCSV(suppName) {
 
   let balance = 0;
   entries.forEach(e => {
-    balance += ((e.credit || 0) - (e.debit || 0));
+      balance += (ledgerMoney(e.credit) - ledgerMoney(e.debit));
     rows.push([
       e.date || '',
       e.ref || '',
@@ -3829,6 +3847,7 @@ function closeModal() {
 async function submitModal(e) {
   e.preventDefault();
   const kind = $('#modal-backdrop').dataset.kind;
+  const previousState = JSON.stringify(state);
 
   if (kind === 'bom-view') {
     closeModal();
@@ -3884,6 +3903,13 @@ async function submitModal(e) {
       state.inventory[idx].hsn = data.hsn;
       state.inventory[idx].gstRate = Number(data.gstRate);
       state.inventory[idx].unitPrice = Number(data.unitPrice || 0);
+      const persistence = await saveState({ immediate: true });
+      if (!persistence.ok && !persistence.localOnly) {
+        restoreStateSnapshot(previousState);
+        render();
+        toast('Inventory tax update was not posted to the hosted database.');
+        return;
+      }
       render();
       toast(`🏷️ Updated HSN (${data.hsn}) & GST Rate (${data.gstRate}%) for ${state.inventory[idx].material}`);
       closeModal();
@@ -4014,6 +4040,13 @@ async function submitModal(e) {
       supplier: data.supplier,
       hsn: data.hsn || '', cgstRate: Number(data.cgstRate || 0), sgstRate: Number(data.sgstRate || 0), igstRate: Number(data.igstRate || 0), otherTaxRate: Number(data.otherTaxRate || 0)
     });
+    const persistence = await saveState({ immediate: true });
+    if (!persistence.ok && !persistence.localOnly) {
+      restoreStateSnapshot(previousState);
+      render();
+      toast('Component catalogue change was not posted to the hosted database.');
+      return;
+    }
     render();
     toast(`Added ${data.name} to Master Component Catalog`);
   }
@@ -4031,6 +4064,13 @@ async function submitModal(e) {
       state.components[idx].sgstRate = Number(data.sgstRate || 0);
       state.components[idx].igstRate = Number(data.igstRate || 0);
       state.components[idx].otherTaxRate = Number(data.otherTaxRate || 0);
+      const persistence = await saveState({ immediate: true });
+      if (!persistence.ok && !persistence.localOnly) {
+        restoreStateSnapshot(previousState);
+        render();
+        toast('Component update was not posted to the hosted database.');
+        return;
+      }
       render();
       toast(`Updated component: ${data.name}`);
     }
@@ -4050,7 +4090,7 @@ async function submitModal(e) {
     if(!state.suppliers) state.suppliers=[];
     if(!state.suppliers.some(s=>normalizeText(s.name)===normalizeText(data.supplier))) state.suppliers.unshift({id:`SUPP-${Date.now()}`,name:data.supplier,gstin:vendorGstin,contactPerson:'',phone:'',address:'',state:'',category:'Supplier'});
     if(data.purchase_type!=='vehicle') items.forEach((x,i)=>state.inventory.unshift({batch:`${data.billNo}-${i+1}`,material:x.name,category:x.category,supplier:data.supplier,received:date,available:`${x.qty} / ${x.qty}`,location:data.location||'Main workshop',health:'Good',unitPrice:x.unitPrice,hsn:x.hsn,gstRate:x.sgstRate+x.igstRate+x.otherRate,billNo:data.billNo,ewayBillNo:data.ewayBillNo||''}));
-    if(!state.supplierLedger)state.supplierLedger=[]; const prev=state.supplierLedger.filter(l=>normalizeText(l.supplier)===normalizeText(data.supplier)).reduce((s,l)=>s+(l.credit||0)-(l.debit||0),0); state.supplierLedger.unshift({id:'SLEDG-BILL-'+Date.now(),date,supplier:data.supplier,ref:data.billNo,desc:`Purchase Bill ${data.billNo} (${items.length} items)${data.ewayBillNo?' · E-way '+data.ewayBillNo:''}`,debit:0,credit:grandTotal,balance:prev+grandTotal,bankAccount});
+    if(!state.supplierLedger)state.supplierLedger=[]; const prev=state.supplierLedger.filter(l=>normalizeText(l.supplier)===normalizeText(data.supplier)).reduce((s,l)=>s+ledgerMoney(l.credit)-ledgerMoney(l.debit),0); state.supplierLedger.unshift({id:'SLEDG-BILL-'+Date.now(),date,supplier:data.supplier,ref:data.billNo,desc:`Purchase Bill ${data.billNo} (${items.length} items)${data.ewayBillNo?' · E-way '+data.ewayBillNo:''}`,debit:0,credit:grandTotal,balance:prev+grandTotal,bankAccount});
     if(data.payment_status==='Paid')state.supplierLedger.unshift({id:'SLEDG-PAY-'+Date.now(),date,supplier:data.supplier,ref:'PAY-'+data.billNo,desc:`Payment for Purchase Bill ${data.billNo}`,debit:grandTotal,credit:0,balance:prev,bankAccount});
     if(data.purchase_type==='vehicle'){ if(!state.vehicles)state.vehicles=[]; vehiclePurchases.forEach(v=>state.vehicles.unshift({chassisNo:v.chassisNo,model:v.modelNo,modelNo:v.modelNo,motorNo:v.motorNo,controllerNo:v.controllerNo,batterySerial:v.batterySerial,color:v.color,otherCharges:v.otherCharges,remarks:v.remarks,price:v.price+v.otherCharges,purchaseBillNo:data.billNo,status:'Available in Showroom'})); }
     const persistence = await saveState({ immediate: true });
@@ -4081,6 +4121,14 @@ async function submitModal(e) {
       state.models[idx].status = data.status;
       state.models[idx].bom = bomItems;
 
+      const persistence = await saveState({ immediate: true });
+      if (!persistence.ok && !persistence.localOnly) {
+        restoreStateSnapshot(previousState);
+        render();
+        toast('Battery model update was not posted to the hosted database.');
+        return;
+      }
+
       render();
       showView('models');
       toast(`Updated battery model: ${data.name}`);
@@ -4105,6 +4153,13 @@ async function submitModal(e) {
       status: data.status,
       bom: bomItems
     });
+    const persistence = await saveState({ immediate: true });
+    if (!persistence.ok && !persistence.localOnly) {
+      restoreStateSnapshot(previousState);
+      render();
+      toast('Battery model change was not posted to the hosted database.');
+      return;
+    }
     render();
     showView('models');
     toast(`Battery model ${data.name} created with ${bomItems.length} BOM components`);
@@ -4137,8 +4192,8 @@ async function submitModal(e) {
       let suppCredit = 0;
       let suppDebit = 0;
       state.supplierLedger.filter(l => normalizeText(l.supplier) === normalizeText(suppName)).forEach(l => {
-        suppCredit += (l.credit || 0);
-        suppDebit += (l.debit || 0);
+        suppCredit += ledgerMoney(l.credit);
+        suppDebit += ledgerMoney(l.debit);
       });
       const currentSuppBal = suppCredit - suppDebit;
 
@@ -4175,8 +4230,8 @@ async function submitModal(e) {
       let partyDebit = 0;
       let partyCredit = 0;
       state.ledger.filter(l => normalizeText(l.party) === normalizeText(suppName)).forEach(l => {
-        partyDebit += (l.debit || 0);
-        partyCredit += (l.credit || 0);
+        partyDebit += ledgerMoney(l.debit);
+        partyCredit += ledgerMoney(l.credit);
       });
 
       // Stock purchase from party creates credit entry in party ledger
@@ -4245,8 +4300,8 @@ async function submitModal(e) {
     let totalCredit = 0;
     let totalDebit = 0;
     state.supplierLedger.filter(l => normalizeText(l.supplier) === normalizeText(suppName)).forEach(l => {
-      totalCredit += (l.credit || 0);
-      totalDebit += (l.debit || 0);
+      totalCredit += ledgerMoney(l.credit);
+      totalDebit += ledgerMoney(l.debit);
     });
     const currentBal = totalCredit - totalDebit;
     const newBal = currentBal - amount;
@@ -4341,6 +4396,25 @@ async function submitModal(e) {
       balanceAmount: totalAmt - paidAmt,
       status: 'Paid & Dispatched'
     };
+
+    if (_serverOnline) {
+      const response = await fetch('/api/operations/vehicle-sale', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(vehInvoice)
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        toast(`Vehicle sale rejected: ${error.error || response.status}`);
+        return;
+      }
+      await refreshHostedState();
+      closeModal();
+      showView('vehicles');
+      toast(`Vehicle invoice ${invNo} saved transactionally in PostgreSQL.`);
+      return;
+    }
 
     if (!state.vehicleInvoices) state.vehicleInvoices = [];
     state.vehicleInvoices.unshift(vehInvoice);
@@ -4679,8 +4753,8 @@ async function submitModal(e) {
     let partyDebit = 0;
     let partyCredit = 0;
     state.ledger.filter(l => normalizeText(l.party) === partyKey).forEach(l => {
-      partyDebit += (l.debit || 0);
-      partyCredit += (l.credit || 0);
+      partyDebit += ledgerMoney(l.debit);
+      partyCredit += ledgerMoney(l.credit);
     });
 
     state.ledger.unshift({
@@ -4742,8 +4816,8 @@ async function submitModal(e) {
     let partyDebit = 0;
     let partyCredit = 0;
     state.ledger.filter(l => normalizeText(l.party) === partyKey).forEach(l => {
-      partyDebit += (l.debit || 0);
-      partyCredit += (l.credit || 0);
+      partyDebit += ledgerMoney(l.debit);
+      partyCredit += ledgerMoney(l.credit);
     });
 
     const isDealer = (state.dealers || []).some(d => normalizeText(d.name) === partyKey);
@@ -4780,8 +4854,8 @@ async function submitModal(e) {
     let partyDebit = 0;
     let partyCredit = 0;
     state.ledger.filter(l => normalizeText(l.party) === partyKey).forEach(l => {
-      partyDebit += (l.debit || 0);
-      partyCredit += (l.credit || 0);
+      partyDebit += ledgerMoney(l.debit);
+      partyCredit += ledgerMoney(l.credit);
     });
 
     const isDealer = (state.dealers || []).some(d => normalizeText(d.name) === partyKey);
@@ -5452,7 +5526,7 @@ function renderDealersMaster() {
     table.innerHTML = dealers.length ? dealers.map(d => {
       const dealerKey = normalizeText(d.name);
       const entries = (state.ledger || []).filter(l => normalizeText(l.party) === dealerKey);
-      const balance = entries.reduce((sum, entry) => sum + (entry.debit || 0) - (entry.credit || 0), 0);
+      const balance = entries.reduce((sum, entry) => sum + ledgerMoney(entry.debit) - ledgerMoney(entry.credit), 0);
       return `
         <tr>
           <td><strong>${d.id || 'DLR'}</strong></td>
