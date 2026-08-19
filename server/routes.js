@@ -161,13 +161,19 @@ router.post('/api/operations/production', asyncRoute(async (req, res) => {
         const bom = (await query('SELECT * FROM model_bom WHERE model_code = $1', [model.code], client)).rows;
         const inventoryUpdates = [];
         for (const item of bom) {
-            const inventory = (await query('SELECT * FROM inventory WHERE material = $1 FOR UPDATE', [item.name], client)).rows[0];
-            if (!inventory) throw operationError(`Required stock is missing: ${item.name}`, 422);
-            const parsed = parseAvailable(inventory.available);
             const required = Number(item.qty) || 1;
-            if (parsed.available < required) throw operationError(`Insufficient stock for ${item.name}: required ${required}, available ${parsed.available}`, 422);
-            const remaining = parsed.available - required;
-            inventoryUpdates.push({ inventory, remaining, total: parsed.total });
+            const inventories = (await query('SELECT * FROM inventory WHERE material = $1 ORDER BY batch FOR UPDATE', [item.name], client)).rows;
+            if (!inventories.length) throw operationError(`Required stock is missing: ${item.name}`, 422);
+            const parsedInventories = inventories.map(inventory => ({ inventory, parsed: parseAvailable(inventory.available) }));
+            const totalAvailable = parsedInventories.reduce((sum, row) => sum + row.parsed.available, 0);
+            if (totalAvailable < required) throw operationError(`Insufficient stock for ${item.name}: required ${required}, available ${totalAvailable}`, 422);
+            let remainingRequired = required;
+            for (const row of parsedInventories) {
+                if (remainingRequired <= 0) break;
+                const consumed = Math.min(row.parsed.available, remainingRequired);
+                inventoryUpdates.push({ inventory: row.inventory, remaining: row.parsed.available - consumed, total: row.parsed.total });
+                remainingRequired -= consumed;
+            }
         }
         const id = data.id || `PR-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
         const serial = data.serial && data.serial !== '—' ? data.serial : null;
