@@ -141,7 +141,11 @@ router.post('/api/sync-state', asyncRoute(async (req, res) => {
     res.json({ success: true, version: result, timestamp: new Date().toISOString() });
 }));
 router.post('/api/reset', asyncRoute(async (req, res) => {
-    await withTransaction(async client => { for (const table of [...new Set(allDataTables)]) await query(`DELETE FROM "${table}"`, [], client); await query('DELETE FROM system_settings', [], client); });
+    await withTransaction(async client => {
+        for (const table of [...new Set(allDataTables)]) await query(`DELETE FROM "${table}"`, [], client);
+        await query('DELETE FROM system_settings', [], client);
+        await query("INSERT INTO app_meta(key,value) VALUES ('state_version','0') ON CONFLICT(key) DO UPDATE SET value='0'", [], client);
+    });
     res.json({ success: true });
 }));
 

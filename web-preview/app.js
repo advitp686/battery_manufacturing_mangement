@@ -322,7 +322,7 @@ const state = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// SQLite Backend API Configuration (v3.0)
+// Hosted PostgreSQL Backend API Configuration (v3.0)
 // ═══════════════════════════════════════════════════════════════════════
 // Authentication is handled by an HttpOnly server session. No API secret is shipped to the browser.
 let _serverOnline = false;
@@ -352,31 +352,17 @@ async function ensureAuthenticated() {
   });
 }
 
-/** Check if SQLite backend is available and auto-migrate localStorage data */
+/** Check if the hosted PostgreSQL backend is available. */
 async function checkAndMigrate() {
   try {
     const healthRes = await fetch('/api/health');
     if (!healthRes.ok) return;
     const health = await healthRes.json();
     _serverOnline = true;
-
-    // If server DB is empty and we have local data, auto-migrate
-    if (health.totalRecords === 0 && localStorage.getItem('voltforge_state_v3')) {
-      console.log('[SQLite] Empty database detected. Auto-migrating localStorage data...');
-      const migrateRes = await fetch('/api/migrate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: localStorage.getItem('voltforge_state_v3')
-      });
-      if (migrateRes.ok) {
-        const result = await migrateRes.json();
-        console.log('[SQLite] Migration complete:', result.counts);
-        toast('✅ Data migrated to SQLite database successfully!');
-      }
-    }
+    console.log(`[Postgres] Hosted database available (${health.totalRecords} records).`);
   } catch (e) {
     _serverOnline = false;
-    console.log('[SQLite] Server not available, using local storage mode.');
+    console.log('[Postgres] Server not available, using local storage mode.');
   }
 }
 
@@ -857,7 +843,7 @@ function updateDatabaseMetricsUI() {
   if ($('#db-total-records')) $('#db-total-records').textContent = `${totalRecs.toLocaleString('en-IN')} Records`;
   if ($('#db-engine-type')) {
     if (_serverOnline) {
-      $('#db-engine-type').textContent = '⚡ SQLite Database Engine (Server-Backed)';
+      $('#db-engine-type').textContent = '⚡ PostgreSQL Database Engine (Server-Backed)';
     } else {
       $('#db-engine-type').textContent = window.indexedDB ? 'IndexedDB Enterprise DB (Unlimited Capacity)' : 'HTML5 Persistent Local Storage';
     }
@@ -865,7 +851,7 @@ function updateDatabaseMetricsUI() {
   if ($('#db-health-status')) {
     const isCloudConfigured = Boolean(localStorage.getItem('tejas_appscript_url'));
     if (_serverOnline) {
-      $('#db-health-status').textContent = isCloudConfigured ? '🟢 100% Fail-Safe (SQLite + Cloud Sync)' : '🟢 100% Fail-Safe (SQLite Server Ready)';
+      $('#db-health-status').textContent = isCloudConfigured ? '🟢 PostgreSQL + Cloud Sync Active' : '🟢 PostgreSQL Server Ready';
     } else {
       $('#db-health-status').textContent = isCloudConfigured ? '🟢 100% Fail-Safe (Local DB + Cloud Sync)' : '🟢 100% Fail-Safe (Local DB Ready)';
     }
@@ -885,42 +871,58 @@ function updateDatabaseMetricsUI() {
   }
 }
 
-function saveState() {
+function syncStateToServer() {
+  return fetch('/api/sync-state', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...state, _syncVersion: Number(state._syncVersion || 0) })
+  }).then(async res => {
+    if (!res.ok) {
+      if (res.status === 409) toast('This data changed elsewhere. Reload before saving to avoid overwriting it.');
+      const error = await res.json().catch(() => ({}));
+      console.warn('[Postgres] Sync failed:', res.status, error.error || '');
+      return { ok: false, status: res.status, error: error.error || `HTTP ${res.status}` };
+    }
+    const result = await res.json();
+    if (result?.version !== undefined) state._syncVersion = result.version;
+    return { ok: true, version: result?.version };
+  }).catch(e => {
+    console.warn('[Postgres] Sync error, server may be offline:', e.message);
+    _serverOnline = false;
+    showOfflineBanner();
+    return { ok: false, error: e.message };
+  });
+}
+
+function saveState({ immediate = false } = {}) {
   try {
     // Always save to localStorage + IndexedDB as fallback
-  localStorage.setItem('voltforge_state_v3', JSON.stringify(state));
+    localStorage.setItem('voltforge_state_v3', JSON.stringify(state));
     saveStateToDB(state);
 
-    // Sync to SQLite backend (debounced to avoid flooding on rapid edits)
+    // Sync to PostgreSQL backend (debounced for ordinary edits; immediate for financial operations)
     if (_serverOnline) {
       clearTimeout(_syncDebounceTimer);
-      _syncDebounceTimer = setTimeout(() => {
-        fetch('/api/sync-state', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...state, _syncVersion: Number(state._syncVersion || 0) })
-        }).then(res => {
-          if (!res.ok) {
-            if (res.status === 409) toast('This data changed elsewhere. Reload before saving to avoid overwriting it.');
-            console.warn('[Postgres] Sync failed:', res.status);
-            return null;
-          }
-          return res.json();
-        }).then(result => {
-          if (result?.version !== undefined) state._syncVersion = result.version;
-        }).catch(e => {
-          console.warn('[Postgres] Sync error, server may be offline:', e.message);
-          _serverOnline = false;
-          showOfflineBanner();
-        });
-      }, 300);
+      if (immediate) return syncStateToServer();
+      _syncDebounceTimer = setTimeout(() => { syncStateToServer(); }, 300);
     }
 
     syncToGoogleSheets(false);
     updateDatabaseMetricsUI();
+    return Promise.resolve({ ok: !_serverOnline ? false : true, localOnly: !_serverOnline });
   } catch (e) {
     console.warn('Failed to save state', e);
+    return Promise.resolve({ ok: false, error: e.message });
   }
+}
+
+function restoreStateSnapshot(snapshot) {
+  const restored = JSON.parse(snapshot);
+  Object.keys(state).forEach(key => delete state[key]);
+  Object.assign(state, restored);
+  localStorage.setItem('voltforge_state_v3', JSON.stringify(state));
+  saveStateToDB(state);
 }
 
 function syncToGoogleSheets(manual = false) {
@@ -1027,7 +1029,7 @@ function loadState() {
     console.warn('Failed to load state from localStorage', e);
   }
 
-  // Step 2: Try loading from SQLite backend (async, authoritative if available)
+  // Step 2: Try loading from hosted PostgreSQL (async, authoritative if available)
   fetch('/api/load-state', {
     credentials: 'same-origin'
   }).then(res => {
@@ -1051,7 +1053,13 @@ function loadState() {
         if (serverState.settings && typeof serverState.settings === 'object') localStorage.setItem(SYSTEM_SETTINGS_KEY, JSON.stringify(serverState.settings));
         // Cache to IndexedDB for offline fallback
         saveStateToDB(state);
-        console.log(`[SQLite] Loaded ${serverRecs} records from server`);
+        console.log(`[Postgres] Loaded ${serverRecs} records from server`);
+      } else {
+        // An authoritative empty server must clear seeded/local browser data.
+        Object.keys(state).forEach(k => { if (Array.isArray(state[k])) state[k] = []; });
+        localStorage.setItem('voltforge_state_v3', JSON.stringify(state));
+        saveStateToDB(state);
+        console.log('[Postgres] Server is empty; cleared local seeded state.');
       }
     }
     try { render(); } catch (e) {}
@@ -1059,7 +1067,7 @@ function loadState() {
   }).catch(e => {
     // Server offline — fall back to IndexedDB
     _serverOnline = false;
-    console.log('[SQLite] Server not available, using local data. Reason:', e.message);
+    console.log('[Postgres] Server not available, using local data. Reason:', e.message);
     loadStateFromDB().then(dbData => {
       if (dbData && typeof dbData === 'object') {
         const dbRecs = (dbData.invoices || []).length + (dbData.inventory || []).length;
@@ -3146,6 +3154,31 @@ function testAndSyncClientGoogleSheet() {
   syncToGoogleSheets(true);
 }
 
+function openClaimModal() {
+  const backdrop = $('#modal-backdrop');
+  if (!backdrop) return;
+  const packs = [...new Map((state.warranties || []).map(w => [w.pack, w])).values()];
+  const packOptions = packs.map(w => `<option value="${w.pack}">${w.pack} — ${w.customer || 'Registered owner'}</option>`).join('');
+  $('#modal-title').textContent = 'Open Warranty Claim';
+  $('.modal').style.width = 'min(600px, 95%)';
+  $('#modal-fields').innerHTML = `
+    <div class="form-grid">
+      <div class="field full"><label>Pack Serial Number *</label>
+        <select name="pack" required>${packOptions || '<option value="">No warranty packs available</option>'}</select>
+      </div>
+      <div class="field"><label>Customer / Owner Name *</label><input name="customer" required placeholder="e.g. Rahul Sharma" /></div>
+      <div class="field"><label>Date Opened *</label><input name="opened" type="date" required value="${new Date().toISOString().slice(0, 10)}" /></div>
+      <div class="field full"><label>Reported Issue *</label><textarea name="issue" required placeholder="Describe the customer complaint or observed failure"></textarea></div>
+      <div class="field"><label>Initial Outcome</label>
+        <select name="outcome"><option>Inspection</option><option>Repair</option><option>Replacement</option></select>
+      </div>
+      <div class="field"><label>Technician / Intake Notes</label><textarea name="notes" placeholder="Add diagnostic or intake notes"></textarea></div>
+    </div>`;
+  backdrop.removeAttribute('hidden');
+  backdrop.style.display = 'grid';
+  backdrop.dataset.kind = 'claim';
+}
+
 function openModal(kind) {
   if (kind === 'google-sheets' || kind === 'sheets') {
     openGoogleSheetsModal();
@@ -3160,7 +3193,13 @@ function openModal(kind) {
     return;
   }
 
+  if (kind === 'claim' || kind === 'claim-modal') {
+    openClaimModal();
+    return;
+  }
+
   if (kind === 'purchase-bill') {
+    const previousState = JSON.stringify(state);
     const partyOptions = [...(state.suppliers || []), ...(state.dealers || [])].map(s => `<option value="${s.name}" data-gstin="${s.gstin || ''}">${s.name}</option>`).join('');
     const itemOptions = (state.components || []).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
     const makeRow = (c = state.components?.[0] || {}) => `<div class="purchase-line" style="display:grid;grid-template-columns:1.8fr .55fr .8fr .7fr .7fr .7fr .7fr .7fr auto;gap:6px;align-items:end;margin-bottom:7px;"><select name="purchase_item[]" class="purchase-item">${itemOptions}</select><input name="purchase_qty[]" type="number" min="0.01" step="0.01" value="1"><input name="purchase_price[]" type="number" min="0" step="0.01" value="${c.price || 0}"><input name="purchase_hsn[]" value="${c.hsn || ''}"><input name="purchase_cgst[]" type="number" step="0.01" value="${c.cgstRate ?? 0}"><input name="purchase_sgst[]" type="number" step="0.01" value="${c.sgstRate ?? 0}"><input name="purchase_igst[]" type="number" step="0.01" value="${c.igstRate ?? 0}"><input name="purchase_other[]" type="number" step="0.01" value="${c.otherTaxRate ?? 0}"><button type="button" class="secondary-btn btn-remove-purchase-line" style="padding:7px;color:#c53030;">×</button></div>`;
@@ -3799,6 +3838,46 @@ async function submitModal(e) {
   const formData = new FormData(e.target);
   const data = Object.fromEntries(formData);
 
+  if (kind === 'claim') {
+    const claimData = {
+      pack: data.pack,
+      customer: data.customer,
+      issue: data.issue,
+      opened: data.opened,
+      outcome: data.outcome || 'Inspection',
+      notes: data.notes || ''
+    };
+    if (!claimData.pack || !claimData.customer || !claimData.issue) {
+      toast('Pack, customer, and reported issue are required.');
+      return;
+    }
+    if (_serverOnline) {
+      const response = await fetch('/api/operations/claim', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'create', ...claimData })
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        toast(`Claim rejected: ${error.error || response.status}`);
+        return;
+      }
+      await refreshHostedState();
+      closeModal();
+      showView('warranty');
+      toast('Warranty claim created transactionally.');
+      return;
+    }
+    const claimId = `CLM-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+    state.claims.unshift({ claim: claimId, ...claimData, status: 'Open' });
+    saveState();
+    render();
+    closeModal();
+    showView('warranty');
+    toast(`Warranty claim ${claimId} created locally.`);
+    return;
+  }
+
   if (kind === 'edit-comp-gst') {
     const idx = Number(data.compIdx);
     if (state.inventory[idx]) {
@@ -3974,7 +4053,14 @@ async function submitModal(e) {
     if(!state.supplierLedger)state.supplierLedger=[]; const prev=state.supplierLedger.filter(l=>normalizeText(l.supplier)===normalizeText(data.supplier)).reduce((s,l)=>s+(l.credit||0)-(l.debit||0),0); state.supplierLedger.unshift({id:'SLEDG-BILL-'+Date.now(),date,supplier:data.supplier,ref:data.billNo,desc:`Purchase Bill ${data.billNo} (${items.length} items)${data.ewayBillNo?' · E-way '+data.ewayBillNo:''}`,debit:0,credit:grandTotal,balance:prev+grandTotal,bankAccount});
     if(data.payment_status==='Paid')state.supplierLedger.unshift({id:'SLEDG-PAY-'+Date.now(),date,supplier:data.supplier,ref:'PAY-'+data.billNo,desc:`Payment for Purchase Bill ${data.billNo}`,debit:grandTotal,credit:0,balance:prev,bankAccount});
     if(data.purchase_type==='vehicle'){ if(!state.vehicles)state.vehicles=[]; vehiclePurchases.forEach(v=>state.vehicles.unshift({chassisNo:v.chassisNo,model:v.modelNo,modelNo:v.modelNo,motorNo:v.motorNo,controllerNo:v.controllerNo,batterySerial:v.batterySerial,color:v.color,otherCharges:v.otherCharges,remarks:v.remarks,price:v.price+v.otherCharges,purchaseBillNo:data.billNo,status:'Available in Showroom'})); }
-    saveState();render();closeModal();showView('purchase-ledger');toast(`${data.purchase_type==='vehicle'?'Vehicle purchase saved to Vehicle Stock and Purchase Ledger':'Purchase bill'} ${data.billNo} saved for ${formatINR(grandTotal)}`);return;
+    const persistence = await saveState({ immediate: true });
+    if (!persistence.ok || persistence.localOnly) {
+      restoreStateSnapshot(previousState);
+      render();
+      toast(`Purchase ${data.billNo} was not posted to the hosted database. No success was recorded.`);
+      return;
+    }
+    render();closeModal();showView('purchase-ledger');toast(`${data.purchase_type==='vehicle'?'Vehicle purchase saved to Vehicle Stock and Purchase Ledger':'Purchase bill'} ${data.billNo} saved for ${formatINR(grandTotal)}`);return;
   }
 
   if (kind === 'edit-model') {
@@ -5835,7 +5921,7 @@ function openVehicleSaleModal(chassisIdx = null) {
 function bind() {
   closeModal();
 
-  // Check for SQLite backend and auto-migrate if needed
+  // Check for hosted PostgreSQL availability
   ensureAuthenticated().then(() => checkAndMigrate()).then(() => {
     try {
       loadState();

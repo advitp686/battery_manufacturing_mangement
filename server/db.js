@@ -95,7 +95,8 @@ async function initDatabase() {
             component_id TEXT, name TEXT, category TEXT, qty NUMERIC, unit_price NUMERIC, hsn TEXT,
             cgst_rate NUMERIC DEFAULT 0, sgst_rate NUMERIC DEFAULT 0, igst_rate NUMERIC DEFAULT 0, other_rate NUMERIC DEFAULT 0,
             taxable_value NUMERIC DEFAULT 0, cgst_amount NUMERIC DEFAULT 0, sgst_amount NUMERIC DEFAULT 0, igst_amount NUMERIC DEFAULT 0,
-            other_amount NUMERIC DEFAULT 0
+            other_amount NUMERIC DEFAULT 0, model_no TEXT, chassis_no TEXT, motor_no TEXT,
+            controller_no TEXT, battery_serial TEXT, color TEXT, other_charges NUMERIC DEFAULT 0, remarks TEXT
         );
         CREATE TABLE IF NOT EXISTS vehicle_models (
             id TEXT PRIMARY KEY, name TEXT, type TEXT, motor TEXT, battery_spec TEXT, hsn TEXT,
@@ -135,6 +136,14 @@ async function initDatabase() {
     await pool.query(`ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS vendor_gstin TEXT`);
     await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS cgst_rate NUMERIC DEFAULT 0`);
     await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC DEFAULT 0`);
+    await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS model_no TEXT`);
+    await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS chassis_no TEXT`);
+    await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS motor_no TEXT`);
+    await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS controller_no TEXT`);
+    await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS battery_serial TEXT`);
+    await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS color TEXT`);
+    await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS other_charges NUMERIC DEFAULT 0`);
+    await pool.query(`ALTER TABLE purchase_bill_items ADD COLUMN IF NOT EXISTS remarks TEXT`);
     await pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS model_no TEXT`);
     await pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS controller_no TEXT`);
     await pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS other_charges NUMERIC DEFAULT 0`);
