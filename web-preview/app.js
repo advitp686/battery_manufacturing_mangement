@@ -874,7 +874,7 @@ function updateDatabaseMetricsUI() {
   // Update Sidebar Sync Card
   if ($('#sidebar-sync-title')) {
     if (_serverOnline) {
-      $('#sidebar-sync-title').textContent = '⚡ SQLite Connected';
+      $('#sidebar-sync-title').textContent = '⚡ PostgreSQL Connected';
       if ($('#sidebar-sync-sub')) $('#sidebar-sync-sub').textContent = 'Server database active';
       if ($('#sidebar-sync-dot')) $('#sidebar-sync-dot').style.background = '#39b77b';
     } else {
