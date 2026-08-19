@@ -90,7 +90,12 @@ async function replaceState(state, client, { full = true } = {}) {
             if (table === 'purchase_bills') {
                 const { items = [], ...bill } = row; await insert(table, bill, client);
                 for (const item of items) await insert('purchase_bill_items', { ...item, billId: bill.id }, client);
-            } else await insert(table, row, client);
+            } else {
+                const normalizedRow = table === 'production' && ['—', '–', '-', ''].includes(String(row.serial ?? '').trim())
+                    ? { ...row, serial: null }
+                    : row;
+                await insert(table, normalizedRow, client);
+            }
         }
     }
     if (full && state.models !== undefined) {
