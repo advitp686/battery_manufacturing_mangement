@@ -5400,8 +5400,8 @@ function renderSuppliers() {
       let totalCredit = 0;
       let totalDebit = 0;
       (state.supplierLedger || []).filter(l => normalizeText(l.supplier) === normalizeText(s.name)).forEach(l => {
-        totalCredit += (l.credit || 0);
-        totalDebit += (l.debit || 0);
+        totalCredit += Number(l.credit) || 0;
+        totalDebit += Number(l.debit) || 0;
       });
       const netPayable = totalCredit - totalDebit;
 
@@ -5448,9 +5448,11 @@ function renderSupplierStatement() {
   if ($('#supp-ledger-table-title')) $('#supp-ledger-table-title').textContent = selectedSuppName ? `Supplier Statement of Account — ${selectedSuppName}` : 'Supplier Statement of Account';
 
   const rows = entries.map(entry => {
-    totalDebit += entry.debit || 0;
-    totalCredit += entry.credit || 0;
-    runningBalance += (entry.credit || 0) - (entry.debit || 0);
+    const debit = Number(entry.debit) || 0;
+    const credit = Number(entry.credit) || 0;
+    totalDebit += debit;
+    totalCredit += credit;
+    runningBalance += credit - debit;
     const bankAcc = entry.bankAccount || 'HDFC Bank Current A/C (50200012345678)';
 
     return `
@@ -5458,8 +5460,8 @@ function renderSupplierStatement() {
         <td>${entry.date}</td>
         <td><strong>${entry.ref}</strong></td>
         <td>${entry.desc}</td>
-        <td style="text-align:right;color:#2f855a;font-weight:700;">${entry.debit ? formatINR(entry.debit) : '—'}</td>
-        <td style="text-align:right;color:#1e293b;">${entry.credit ? formatINR(entry.credit) : '—'}</td>
+        <td style="text-align:right;color:#2f855a;font-weight:700;">${debit ? formatINR(debit) : '—'}</td>
+        <td style="text-align:right;color:#1e293b;">${credit ? formatINR(credit) : '—'}</td>
         <td style="text-align:right;font-weight:800;color:${runningBalance > 0 ? '#dc2626' : '#2f855a'};">${formatINR(runningBalance)}</td>
         <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${bankAcc}</span></td>
       </tr>
@@ -5553,17 +5555,19 @@ function renderDealerStatement() {
   if ($('#dealer-statement-title')) $('#dealer-statement-title').textContent = selectedDealer ? `Dealer B2B Statement — ${selectedDealer}` : 'Dealer B2B Statement of Account';
 
   const rows = entries.map(entry => {
-    totalDebit += entry.debit || 0;
-    totalCredit += entry.credit || 0;
-    runningBalance += (entry.debit || 0) - (entry.credit || 0);
-    const bankAcc = entry.bankAccount || (entry.credit > 0 ? 'HDFC Bank Current A/C (50200012345678)' : 'Dealer Invoice Debit');
+    const debit = Number(entry.debit) || 0;
+    const credit = Number(entry.credit) || 0;
+    totalDebit += debit;
+    totalCredit += credit;
+    runningBalance += debit - credit;
+    const bankAcc = entry.bankAccount || (credit > 0 ? 'HDFC Bank Current A/C (50200012345678)' : 'Dealer Invoice Debit');
     return `
       <tr>
         <td>${entry.date}</td>
         <td><strong>${entry.ref}</strong></td>
         <td>${entry.desc}</td>
-        <td style="text-align:right;">${entry.debit ? formatINR(entry.debit) : '—'}</td>
-        <td style="text-align:right;color:#16a34a;">${entry.credit ? formatINR(entry.credit) : '—'}</td>
+        <td style="text-align:right;">${debit ? formatINR(debit) : '—'}</td>
+        <td style="text-align:right;color:#16a34a;">${credit ? formatINR(credit) : '—'}</td>
         <td style="text-align:right;font-weight:800;color:${runningBalance > 0 ? '#dc2626' : '#16a34a'};">${formatINR(runningBalance)}</td>
         <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${bankAcc}</span></td>
       </tr>
