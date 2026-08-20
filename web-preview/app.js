@@ -442,6 +442,32 @@ function normalizeText(value) {
   return String(value ?? '').trim().toLowerCase();
 }
 
+const DEFAULT_WARRANTY_MONTHS = 24;
+const WARRANTY_ACTIVATION_RULE = 'sale_type_default';
+
+function getWarrantyMonths(model) {
+  const structured = Number(model?.warrantyMonths);
+  if (Number.isFinite(structured) && structured > 0) return Math.round(structured);
+  const legacy = String(model?.warranty || '').match(/\d+(?:\.\d+)?/);
+  const parsed = legacy ? Number(legacy[0]) : DEFAULT_WARRANTY_MONTHS;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : DEFAULT_WARRANTY_MONTHS;
+}
+
+function getWarrantyActivationRule(model) {
+  return model?.warrantyActivationRule || WARRANTY_ACTIVATION_RULE;
+}
+
+function formatModelWarranty(model) {
+  return `${getWarrantyMonths(model)} months`;
+}
+
+function addWarrantyMonths(dateValue, months) {
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setMonth(date.getMonth() + Number(months || DEFAULT_WARRANTY_MONTHS));
+  return date;
+}
+
 function parseAvailableQty(value) {
   if (value == null) return 0;
   const raw = String(value).split('/')[0].replace(/,/g, '').trim();
@@ -1173,7 +1199,7 @@ function render() {
             <td>${m.capacity}</td>
             <td><span style="font-weight:700;color:#2b6cb0;">${bomCount} components</span></td>
             <td><strong style="color:#2f855a">${formatINR(bomCost)}</strong></td>
-            <td>${m.warranty}</td>
+            <td>${formatModelWarranty(m)}</td>
             <td>${badge(m.status)}</td>
             <td>
               <div style="display:flex;gap:6px;">
@@ -1990,7 +2016,7 @@ function showBomModal(modelIdx) {
     <div style="margin-bottom:16px;background:#f7fafc;padding:14px 16px;border-radius:10px;border:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
       <div>
         <strong style="font-size:16px;color:#1a202c;">${model.name}</strong> (${model.chemistry} · ${model.config})
-        <div style="font-size:12px;color:#718096;margin-top:2px;">Capacity: ${model.capacity} | Warranty: ${model.warranty}</div>
+        <div style="font-size:12px;color:#718096;margin-top:2px;">Capacity: ${model.capacity} | Warranty: ${formatModelWarranty(model)}</div>
       </div>
       <div style="text-align:right;">
         <div style="font-size:11px;color:#718096;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;">Total Pack BOM Cost</div>
@@ -2101,7 +2127,8 @@ function editModelModal(modelIdx) {
       </div>
       <div class="field"><label>Series / Parallel Config</label><input name="config" value="${model.config}" required /></div>
       <div class="field"><label>Rated Capacity</label><input name="capacity" value="${model.capacity}" required /></div>
-      <div class="field"><label>Warranty Duration</label><input name="warranty" value="${model.warranty}" required /></div>
+      <div class="field"><label>Warranty Duration (months)</label><input name="warrantyMonths" type="number" min="1" max="120" step="1" value="${getWarrantyMonths(model)}" required /></div>
+      <div class="field"><label>Warranty Activation Rule</label><select name="warrantyActivationRule"><option value="sale_type_default" ${getWarrantyActivationRule(model) === 'sale_type_default' ? 'selected' : ''}>Retail: sale day · Dealer: +1 month</option></select><small style="color:#64748b;display:block;margin-top:4px;">This is a controlled policy, not free text.</small></div>
       <div class="field"><label>Status</label>
         <select name="status">
           <option ${model.status === 'Active' ? 'selected' : ''}>Active</option>
@@ -2645,7 +2672,8 @@ const modalSchemas = {
       ['chemistry', 'Chemistry', 'select', ['LFP', 'NMC']],
       ['config', 'Series / parallel', 'text', '16S 1P'],
       ['capacity', 'Rated capacity', 'text', '100Ah · 51.2V'],
-      ['warranty', 'Warranty', 'text', '24 months'],
+      ['warrantyMonths', 'Warranty Duration (months)', 'number', '24'],
+      ['warrantyActivationRule', 'Warranty Activation Rule', 'select', ['Retail: sale day · Dealer: +1 month']],
       ['status', 'Status', 'select', ['Active', 'Draft']]
     ]
   },
@@ -3321,7 +3349,12 @@ function openModal(kind) {
       <div class="form-grid">
         ${schema.fields.map(f => {
           const [name, label, type, def] = f;
-          if (type === 'select') return `<div class="field"><label for="field-${name}">${label}</label><select id="field-${name}" name="${name}">${def.map(v => `<option>${v}</option>`).join('')}</select></div>`;
+          if (type === 'select') {
+            const options = name === 'warrantyActivationRule'
+              ? '<option value="sale_type_default">Retail: sale day · Dealer: +1 month</option>'
+              : def.map(v => `<option>${v}</option>`).join('');
+            return `<div class="field"><label for="field-${name}">${label}</label><select id="field-${name}" name="${name}">${options}</select></div>`;
+          }
           return `<div class="field ${type === 'textarea' ? 'full' : ''}"><label for="field-${name}">${label}</label>${type === 'textarea' ? `<textarea id="field-${name}" name="${name}">${def}</textarea>` : `<input id="field-${name}" name="${name}" type="${type}" value="${def}" />`}</div>`;
         }).join('')}
       </div>
@@ -4191,7 +4224,14 @@ async function submitModal(e) {
       state.models[idx].chemistry = data.chemistry;
       state.models[idx].config = data.config;
       state.models[idx].capacity = data.capacity;
-      state.models[idx].warranty = data.warranty;
+      const warrantyMonths = Number(data.warrantyMonths);
+      if (!Number.isInteger(warrantyMonths) || warrantyMonths < 1 || warrantyMonths > 120) {
+        toast('Warranty duration must be a whole number from 1 to 120 months.');
+        return;
+      }
+      state.models[idx].warrantyMonths = warrantyMonths;
+      state.models[idx].warrantyActivationRule = WARRANTY_ACTIVATION_RULE;
+      state.models[idx].warranty = formatModelWarranty(state.models[idx]);
       state.models[idx].status = data.status;
       state.models[idx].bom = bomItems;
 
@@ -4211,6 +4251,11 @@ async function submitModal(e) {
 
   if (kind === 'model') {
     const selectedCompIds = formData.getAll('comp_select');
+    const warrantyMonths = Number(data.warrantyMonths);
+    if (!Number.isInteger(warrantyMonths) || warrantyMonths < 1 || warrantyMonths > 120) {
+      toast('Warranty duration must be a whole number from 1 to 120 months.');
+      return;
+    }
     const bomItems = selectedCompIds.map(id => {
       const comp = state.components.find(c => c.id === id);
       const qty = Number(data[`comp_qty_${id}`] || 1);
@@ -4223,7 +4268,9 @@ async function submitModal(e) {
       chemistry: data.chemistry,
       config: data.config,
       capacity: data.capacity,
-      warranty: data.warranty,
+      warrantyMonths,
+      warrantyActivationRule: WARRANTY_ACTIVATION_RULE,
+      warranty: `${warrantyMonths} months`,
       status: data.status,
       bom: bomItems
     });
@@ -4781,13 +4828,12 @@ async function submitModal(e) {
           prodItem.status = isRetail ? 'Sold (Retail)' : 'Dispatched (Dealer)';
         }
 
-        const startDateObj = new Date();
-        if (!isRetail) {
-          // Dealer warranty auto-activates after 1 month (30 days)
-          startDateObj.setMonth(startDateObj.getMonth() + 1);
-        }
-        const endDateObj = new Date(startDateObj);
-        endDateObj.setFullYear(endDateObj.getFullYear() + 2);
+        const model = state.models.find(m => normalizeText(m.name) === normalizeText(prodItem?.model));
+        const warrantyMonths = getWarrantyMonths(model);
+        const activationRule = getWarrantyActivationRule(model);
+        const startDateObj = new Date(`${todayStr}T00:00:00`);
+        if (activationRule === WARRANTY_ACTIVATION_RULE && !isRetail) startDateObj.setMonth(startDateObj.getMonth() + 1);
+        const endDateObj = addWarrantyMonths(startDateObj, warrantyMonths);
 
         const startStr = startDateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
         const endStr = endDateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -4797,7 +4843,10 @@ async function submitModal(e) {
           customer: isRetail ? data.party : `${data.party} (Dealer Auto)`,
           registered: startStr,
           end: endStr,
-          status: isRetail ? 'Active (Same Day Auto)' : 'Dealer Auto (+1 Month)'
+          status: isRetail ? 'Active (Same Day Auto)' : 'Dealer Auto (+1 Month)',
+          termMonths: warrantyMonths,
+          activationRule,
+          activationDate: startStr
         });
       }
     });

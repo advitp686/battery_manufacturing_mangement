@@ -219,9 +219,15 @@ router.post('/api/operations/sale', asyncRoute(async (req, res) => {
             if (item.packSerial) {
                 await insert('sales', { invoice: invoice.invoice, pack: item.packSerial, party: invoice.party, type: invoice.type, date: invoice.date, warranty: invoice.warrantyStatus, amount: item.amount, desc: item.desc || item.description }, client);
                 await query('UPDATE production SET status = $1 WHERE serial = $2', [invoice.type === 'Retail' ? 'Sold (Retail)' : 'Dispatched (Dealer)', item.packSerial], client);
-                const start = new Date(); if (invoice.type !== 'Retail') start.setMonth(start.getMonth() + 1);
-                const end = new Date(start); end.setFullYear(end.getFullYear() + 2);
-                await query('INSERT INTO warranties(pack,customer,registered,"end",status) VALUES($1,$2,$3,$4,$5) ON CONFLICT(pack) DO UPDATE SET customer=EXCLUDED.customer,registered=EXCLUDED.registered,"end"=EXCLUDED."end",status=EXCLUDED.status', [item.packSerial, invoice.type === 'Retail' ? invoice.party : `${invoice.party} (Dealer Auto)`, start.toISOString().slice(0, 10), end.toISOString().slice(0, 10), invoice.warrantyStatus || (invoice.type === 'Retail' ? 'Active (Same Day Auto)' : 'Dealer Auto (+1 Month)')], client);
+                const productionModel = (await query('SELECT model FROM production WHERE serial = $1 LIMIT 1', [item.packSerial], client)).rows[0];
+                const model = productionModel ? (await query('SELECT warranty_months, warranty_activation_rule FROM models WHERE name = $1 LIMIT 1', [productionModel.model], client)).rows[0] : null;
+                const termMonths = Number(model?.warranty_months) > 0 ? Number(model.warranty_months) : 24;
+                const activationRule = model?.warranty_activation_rule || 'sale_type_default';
+                const start = new Date(`${invoice.date || new Date().toISOString().slice(0, 10)}T00:00:00`);
+                if (activationRule === 'sale_type_default' && invoice.type !== 'Retail') start.setMonth(start.getMonth() + 1);
+                const end = new Date(start); end.setMonth(end.getMonth() + termMonths);
+                const status = invoice.warrantyStatus || (invoice.type === 'Retail' ? 'Active (Same Day Auto)' : 'Dealer Auto (+1 Month)');
+                await query('INSERT INTO warranties(pack,customer,registered,"end",status,term_months,activation_rule,activation_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(pack) DO UPDATE SET customer=EXCLUDED.customer,registered=EXCLUDED.registered,"end"=EXCLUDED."end",status=EXCLUDED.status,term_months=EXCLUDED.term_months,activation_rule=EXCLUDED.activation_rule,activation_date=EXCLUDED.activation_date', [item.packSerial, invoice.type === 'Retail' ? invoice.party : `${invoice.party} (Dealer Auto)`, start.toISOString().slice(0, 10), end.toISOString().slice(0, 10), status, termMonths, activationRule, start.toISOString().slice(0, 10)], client);
             }
         }
         const ledgerId = `LEDG-${crypto.randomUUID()}`;

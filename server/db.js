@@ -28,7 +28,8 @@ async function initDatabase() {
         );
         CREATE TABLE IF NOT EXISTS models (
             code TEXT PRIMARY KEY, name TEXT NOT NULL, chemistry TEXT, config TEXT,
-            capacity TEXT, warranty TEXT, status TEXT DEFAULT 'Active'
+            capacity TEXT, warranty TEXT, warranty_months INTEGER DEFAULT 24,
+            warranty_activation_rule TEXT DEFAULT 'sale_type_default', status TEXT DEFAULT 'Active'
         );
         CREATE TABLE IF NOT EXISTS model_bom (
             id BIGSERIAL PRIMARY KEY, model_code TEXT NOT NULL REFERENCES models(code) ON DELETE CASCADE,
@@ -70,7 +71,8 @@ async function initDatabase() {
             debit NUMERIC DEFAULT 0, credit NUMERIC DEFAULT 0, balance NUMERIC DEFAULT 0, bank_account TEXT
         );
         CREATE TABLE IF NOT EXISTS warranties (
-            pack TEXT PRIMARY KEY, customer TEXT, registered TEXT, "end" TEXT, status TEXT DEFAULT 'Active'
+            pack TEXT PRIMARY KEY, customer TEXT, registered TEXT, "end" TEXT, status TEXT DEFAULT 'Active',
+            term_months INTEGER DEFAULT 24, activation_rule TEXT DEFAULT 'sale_type_default', activation_date TEXT
         );
         CREATE TABLE IF NOT EXISTS claims (
             claim TEXT PRIMARY KEY, pack TEXT, customer TEXT, issue TEXT, opened TEXT, outcome TEXT,
@@ -150,6 +152,11 @@ async function initDatabase() {
     await pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS remarks TEXT`);
     await pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS purchase_bill_no TEXT`);
     await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS id BIGSERIAL`);
+    await pool.query(`ALTER TABLE models ADD COLUMN IF NOT EXISTS warranty_months INTEGER DEFAULT 24`);
+    await pool.query(`ALTER TABLE models ADD COLUMN IF NOT EXISTS warranty_activation_rule TEXT DEFAULT 'sale_type_default'`);
+    await pool.query(`ALTER TABLE warranties ADD COLUMN IF NOT EXISTS term_months INTEGER DEFAULT 24`);
+    await pool.query(`ALTER TABLE warranties ADD COLUMN IF NOT EXISTS activation_rule TEXT DEFAULT 'sale_type_default'`);
+    await pool.query(`ALTER TABLE warranties ADD COLUMN IF NOT EXISTS activation_date TEXT`);
     await pool.query(`ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_pkey`);
     await pool.query(`ALTER TABLE sales ADD CONSTRAINT sales_pkey PRIMARY KEY (id)`);
 }
