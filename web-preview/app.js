@@ -3611,7 +3611,7 @@ function openModal(kind) {
       ? chargerStock.map(c => `<option value="${c.material}" data-hsn="85044090" data-price="2500">${c.material} (${c.available})</option>`).join('')
       : '<option value="58.4V 10A Fast Battery Charger" data-hsn="85044090" data-price="2500">58.4V 10A Fast Battery Charger</option>';
     const catalogItemOptsHtml = (state.components || []).length > 0
-      ? state.components.map(c => `<option value="${c.id}" data-hsn="${c.hsn || ''}" data-price="${Number(c.price || 0)}" data-gst="${Number(c.cgstRate || 0) + Number(c.sgstRate || 0) || 18}">${c.name} (${c.category || 'Component'}) — ₹${Number(c.price || 0).toLocaleString('en-IN')}</option>`).join('')
+      ? state.components.map(c => `<option value="${c.id}" data-hsn="${c.hsn || ((/bms|cell|battery/i.test(c.category || '')) ? '85076000' : '9987')}" data-price="${Number(c.price || 0)}" data-gst="${Number(c.cgstRate || 0) + Number(c.sgstRate || 0) || 18}">${c.name} (${c.category || 'Component'}) — ₹${Number(c.price || 0).toLocaleString('en-IN')}</option>`).join('')
       : '<option value="">No Master Catalogue items available</option>';
 
     const registeredDealers = state.dealers || [];
@@ -3912,7 +3912,7 @@ function openModal(kind) {
         if (component && option) {
           rowEl.querySelector(`#item_desc_${idx}`).value = component.name;
           rowEl.querySelector(`#item_serial_${idx}`).value = component.id;
-          rowEl.querySelector(`#item_hsn_${idx}`).value = component.hsn || '';
+          rowEl.querySelector(`#item_hsn_${idx}`).value = component.hsn || ((/bms|cell|battery/i.test(component.category || '')) ? '85076000' : '9987');
           const priceInput = rowEl.querySelector(`[name="item_price_${idx}"]`);
           if (priceInput) priceInput.value = Number(component.price || 0).toFixed(2);
           if (gstInput) gstInput.value = String(Number(option.dataset.gst || 18));
