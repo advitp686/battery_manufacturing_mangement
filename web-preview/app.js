@@ -609,6 +609,18 @@ function defaultGstRateForItem(item = {}, saleType = '') {
   return accessoryRate;
 }
 
+function getVehicleGstRate(vehicle = {}) {
+  const settings = getSystemSettings();
+  const model = (state.vehicleModels || []).find(vm => normalizeText(vm.name) === normalizeText(vehicle.model) || vm.id === vehicle.modelNo);
+  return Number(vehicle.gstRate ?? model?.gstRate ?? settings.gstRateVehicle ?? settings.gstRate ?? 0);
+}
+
+function getConfiguredGstRate(kind = '') {
+  const settings = getSystemSettings();
+  const key = `gstRate${kind}`;
+  return Number(settings[key] ?? settings.gstRate ?? 0);
+}
+
 function normalizeInvoiceItem(item = {}, idx = 0, saleType = '', taxMode = 'INTRA') {
   const qty = Number(item.qty ?? item.quantity ?? 1);
   const price = Number(item.price ?? item.unitPrice ?? 0);
@@ -3092,7 +3104,7 @@ function recalculateRepairTotals() {
   $$('.repair-item-row').forEach(row => {
     const price = Number(row.querySelector('.repair-price-input')?.value || 0);
     const qty = Number(row.querySelector('.repair-qty-input')?.value || 1);
-    const gstRate = Number(row.querySelector('.repair-gst-input')?.value || 18);
+    const gstRate = Number(row.querySelector('.repair-gst-input')?.value || getConfiguredGstRate('Service'));
 
     const rowTaxable = price * qty;
     const rowGst = rowTaxable * gstRate / 100;
@@ -3627,7 +3639,7 @@ function openModal(kind) {
       ? chargerStock.map(c => `<option value="${c.material}" data-hsn="85044090" data-price="2500">${c.material} (${c.available})</option>`).join('')
       : '<option value="58.4V 10A Fast Battery Charger" data-hsn="85044090" data-price="2500">58.4V 10A Fast Battery Charger</option>';
     const catalogItemOptsHtml = (state.components || []).length > 0
-      ? state.components.map(c => `<option value="${c.id}" data-hsn="${c.hsn || ((/bms|cell|battery/i.test(c.category || '')) ? '85076000' : '9987')}" data-price="${Number(c.price || 0)}" data-gst="${Number(c.cgstRate || 0) + Number(c.sgstRate || 0) || 18}">${c.name} (${c.category || 'Component'}) — ₹${Number(c.price || 0).toLocaleString('en-IN')}</option>`).join('')
+      ? state.components.map(c => `<option value="${c.id}" data-hsn="${c.hsn || ((/bms|cell|battery/i.test(c.category || '')) ? '85076000' : '9987')}" data-price="${Number(c.price || 0)}" data-gst="${Number(c.cgstRate || 0) + Number(c.sgstRate || 0) || getConfiguredGstRate('Accessory')}">${c.name} (${c.category || 'Component'}) — ₹${Number(c.price || 0).toLocaleString('en-IN')}</option>`).join('')
       : '<option value="">No Master Catalogue items available</option>';
 
     const registeredDealers = state.dealers || [];
@@ -3864,7 +3876,7 @@ function openModal(kind) {
             </select>
           `;
           rowEl.querySelector(`#item_hsn_${idx}`).value = String(getSystemSettings().hsnCharger || '85044090').trim();
-          if (gstInput) gstInput.value = '18';
+          if (gstInput) gstInput.value = getConfiguredGstRate('Charger');
           qtyWrap.innerHTML = `
             <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Qty *</label>
             <input name="item_qty_${idx}" type="number" value="1" min="1" class="calc-qty-input" data-row="${idx}" style="width:100%;box-sizing:border-box;padding:6px;font-size:12px;font-weight:700;text-align:center;border:1px solid #cbd5e1;" />
@@ -3878,7 +3890,7 @@ function openModal(kind) {
             </select>
           `;
           rowEl.querySelector(`#item_hsn_${idx}`).value = '';
-          if (gstInput) gstInput.value = '18';
+          if (gstInput) gstInput.value = getConfiguredGstRate('Accessory');
           qtyWrap.innerHTML = `
             <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Qty *</label>
             <input name="item_qty_${idx}" type="number" value="1" min="1" step="1" class="calc-qty-input" data-row="${idx}" style="width:100%;box-sizing:border-box;padding:6px;font-size:12px;font-weight:700;text-align:center;border:1px solid #cbd5e1;" />
@@ -3888,7 +3900,7 @@ function openModal(kind) {
           rowEl.querySelector(`#item_hsn_${idx}`).value = cat === 'accessory'
             ? String(getSystemSettings().hsnCharger || '85044090').trim()
             : '9987';
-          if (gstInput) gstInput.value = '18';
+          if (gstInput) gstInput.value = getConfiguredGstRate('Accessory');
           qtyWrap.innerHTML = `
             <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Qty *</label>
             <input name="item_qty_${idx}" type="number" value="1" min="1" class="calc-qty-input" data-row="${idx}" style="width:100%;box-sizing:border-box;padding:6px;font-size:12px;font-weight:700;text-align:center;border:1px solid #cbd5e1;" />
@@ -3931,7 +3943,7 @@ function openModal(kind) {
           rowEl.querySelector(`#item_hsn_${idx}`).value = String(getSystemSettings().hsnCharger || '85044090').trim();
           const priceInput = rowEl.querySelector(`[name="item_price_${idx}"]`);
           if (priceInput) priceInput.value = '2500.00';
-          if (gstInput) gstInput.value = '18';
+          if (gstInput) gstInput.value = getConfiguredGstRate('Charger');
           recalculateTotals();
         }
       });
@@ -3960,7 +3972,7 @@ function openModal(kind) {
           rowEl.querySelector(`#item_hsn_${idx}`).value = component.hsn || ((/bms|cell|battery/i.test(component.category || '')) ? '85076000' : '9987');
           const priceInput = rowEl.querySelector(`[name="item_price_${idx}"]`);
           if (priceInput) priceInput.value = Number(component.price || 0).toFixed(2);
-          if (gstInput) gstInput.value = String(Number(option.dataset.gst || 18));
+          if (gstInput) gstInput.value = String(Number(option.dataset.gst || getConfiguredGstRate('Accessory')));
           recalculateTotals();
         }
       });
@@ -4663,8 +4675,9 @@ async function submitModal(e) {
       batterySerial: data.batterySerial || '',
       color: data.color || '',
       hsn: data.hsn || '87116010',
-      taxableValue: Math.round(totalAmt / 1.05),
-      totalGst: Math.round(totalAmt - (totalAmt / 1.05)),
+      gstRate: getVehicleGstRate({ ...data, model: data.model, hsn: data.hsn }),
+      taxableValue: roundMoney(totalAmt / (1 + getVehicleGstRate({ ...data, model: data.model, hsn: data.hsn }) / 100)),
+      totalGst: roundMoney(totalAmt - (totalAmt / (1 + getVehicleGstRate({ ...data, model: data.model, hsn: data.hsn }) / 100))),
       grandTotal: totalAmt,
       bankAccount: bankAcc,
       paidAmount: paidAmt,
@@ -5662,18 +5675,26 @@ function lookup(token) {
 }
 
 function normalizeInvoiceForPrint(inv) {
-  const normalized = calculateInvoiceTotals(Array.isArray(inv.items) ? inv.items : [], inv.type, {
+  const rawItems = Array.isArray(inv.items) ? inv.items : [];
+  const itemsForPrint = rawItems.map(item => {
+    // Older invoices were saved before line GST fields were persisted. Reuse
+    // the configured item rate for those rows, while preserving an explicitly
+    // stored zero rate on new invoices.
+    const legacyMissingTax = Number(inv.totalGst || 0) > 0 && Number(item.gstRate || 0) === 0 && Number(item.gstAmount || 0) === 0;
+    return legacyMissingTax ? { ...item, gstRate: undefined, gstAmount: undefined } : item;
+  });
+  const normalized = calculateInvoiceTotals(itemsForPrint, inv.type, {
     party: inv.party || '',
     partyState: inv.partyState || '',
     taxMode: inv.taxMode || ''
   });
   const items = normalized.items;
-  let taxableValue = Number(inv.taxableValue ?? inv.taxable ?? normalized.taxableValue);
-  let cgstAmount = Number(inv.cgstAmount ?? inv.cgst ?? normalized.cgstAmount);
-  let sgstAmount = Number(inv.sgstAmount ?? inv.sgst ?? normalized.sgstAmount);
-  let igstAmount = Number(inv.igstAmount ?? inv.igst ?? normalized.igstAmount);
-  let cessAmount = Number(inv.cessAmount ?? normalized.cessAmount);
-  let grandTotal = Number(inv.grandTotal ?? normalized.grandTotal);
+  let taxableValue = items.length ? normalized.taxableValue : Number(inv.taxableValue ?? inv.taxable ?? normalized.taxableValue);
+  let cgstAmount = items.length ? normalized.cgstAmount : Number(inv.cgstAmount ?? inv.cgst ?? normalized.cgstAmount);
+  let sgstAmount = items.length ? normalized.sgstAmount : Number(inv.sgstAmount ?? inv.sgst ?? normalized.sgstAmount);
+  let igstAmount = items.length ? normalized.igstAmount : Number(inv.igstAmount ?? inv.igst ?? normalized.igstAmount);
+  let cessAmount = items.length ? normalized.cessAmount : Number(inv.cessAmount ?? normalized.cessAmount);
+  let grandTotal = items.length ? normalized.grandTotal : Number(inv.grandTotal ?? normalized.grandTotal);
 
   if (!items.length && (inv.taxableValue != null || inv.grandTotal != null)) {
     taxableValue = Number(inv.taxableValue ?? inv.taxable ?? 0);
@@ -5695,7 +5716,7 @@ function normalizeInvoiceForPrint(inv) {
     igstAmount,
     cessAmount,
     grandTotal,
-    totalGst: Number(inv.totalGst ?? normalized.totalGst ?? (cgstAmount + sgstAmount + igstAmount)),
+    totalGst: items.length ? normalized.totalGst : Number(inv.totalGst ?? normalized.totalGst ?? (cgstAmount + sgstAmount + igstAmount)),
     amountInWords: inv.amountInWords || numberToWords(grandTotal)
   };
 }
@@ -6483,6 +6504,7 @@ function openVehicleSaleModal(chassisIdx = null) {
       </div>
 
       <div class="field"><label style="font-weight:700;">Vehicle HSN Code</label><input name="hsn" value="87116010" /></div>
+      <div class="field"><label style="font-weight:700;">GST Rate (%)</label><input name="gstRate" type="number" min="0" max="100" step="0.01" value="${getVehicleGstRate(initialVeh)}" /></div>
 
       <div class="field"><label style="font-weight:800;color:#2f855a;">Grand Total Sale Price (₹) *</label><input name="grandTotal" id="veh-sale-total" type="number" min="0" step="0.01" inputmode="decimal" value="${initialVeh.price || 145000}" style="font-weight:800;font-size:15px;color:#2f855a;" required /></div>
       <div class="field"><label style="font-weight:800;color:#2b6cb0;">Upfront Payment Received (₹) *</label><input name="paidAmount" id="veh-sale-paid" type="number" min="0" step="0.01" inputmode="decimal" value="${initialVeh.price || 145000}" style="font-weight:800;font-size:15px;" required /></div>
@@ -6503,6 +6525,8 @@ function openVehicleSaleModal(chassisIdx = null) {
       $('#veh-sale-color').value = veh.color || '';
       $('#veh-sale-total').value = veh.price || 145000;
       $('#veh-sale-paid').value = veh.price || 145000;
+      const gstInput = $('#modal-fields input[name="gstRate"]');
+      if (gstInput) gstInput.value = getVehicleGstRate(veh);
     }
   });
 

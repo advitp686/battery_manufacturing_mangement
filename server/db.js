@@ -64,7 +64,10 @@ async function initDatabase() {
             id BIGSERIAL PRIMARY KEY, invoice_no TEXT NOT NULL REFERENCES invoices(invoice) ON DELETE CASCADE,
             sr INTEGER, "desc" TEXT, pack_serial TEXT, hsn TEXT, chassis_vin TEXT, engine_motor TEXT,
             color TEXT, key_controller TEXT, wrc_no TEXT, charger_info TEXT, battery_info TEXT,
-            qty NUMERIC, price NUMERIC, amount NUMERIC
+            qty NUMERIC, price NUMERIC, amount NUMERIC,
+            gst_rate NUMERIC DEFAULT 0, gst_amount NUMERIC DEFAULT 0,
+            cgst_amount NUMERIC DEFAULT 0, sgst_amount NUMERIC DEFAULT 0,
+            igst_amount NUMERIC DEFAULT 0, cess_amount NUMERIC DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS ledger (
             id TEXT PRIMARY KEY, date TEXT, party TEXT, party_type TEXT, ref TEXT, "desc" TEXT,
@@ -112,7 +115,9 @@ async function initDatabase() {
         CREATE TABLE IF NOT EXISTS vehicle_invoices (
             invoice TEXT PRIMARY KEY, party TEXT, father_name TEXT, phone TEXT, address TEXT,
             party_state TEXT, type TEXT, date TEXT, model TEXT, chassis_no TEXT, motor_no TEXT,
-            battery_serial TEXT, color TEXT, hsn TEXT, taxable_value NUMERIC, total_gst NUMERIC,
+            battery_serial TEXT, color TEXT, hsn TEXT, gst_rate NUMERIC DEFAULT 0,
+            taxable_value NUMERIC, total_gst NUMERIC, cgst_amount NUMERIC DEFAULT 0,
+            sgst_amount NUMERIC DEFAULT 0, igst_amount NUMERIC DEFAULT 0,
             grand_total NUMERIC, bank_account TEXT, paid_amount NUMERIC DEFAULT 0,
             balance_amount NUMERIC DEFAULT 0, status TEXT
         );
@@ -125,6 +130,16 @@ async function initDatabase() {
         ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS paid_amount NUMERIC DEFAULT 0;
         ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS balance_amount NUMERIC DEFAULT 0;
         ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS payment_mode TEXT;
+        ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS gst_rate NUMERIC DEFAULT 0;
+        ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS gst_amount NUMERIC DEFAULT 0;
+        ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC DEFAULT 0;
+        ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS sgst_amount NUMERIC DEFAULT 0;
+        ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS igst_amount NUMERIC DEFAULT 0;
+        ALTER TABLE invoice_items ADD COLUMN IF NOT EXISTS cess_amount NUMERIC DEFAULT 0;
+        ALTER TABLE vehicle_invoices ADD COLUMN IF NOT EXISTS gst_rate NUMERIC DEFAULT 0;
+        ALTER TABLE vehicle_invoices ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC DEFAULT 0;
+        ALTER TABLE vehicle_invoices ADD COLUMN IF NOT EXISTS sgst_amount NUMERIC DEFAULT 0;
+        ALTER TABLE vehicle_invoices ADD COLUMN IF NOT EXISTS igst_amount NUMERIC DEFAULT 0;
         CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS sync_log (
             id BIGSERIAL PRIMARY KEY, table_name TEXT, record_count INTEGER, action TEXT,
