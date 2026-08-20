@@ -3116,6 +3116,10 @@ function doPost(e) {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var payload = JSON.parse(e.postData.contents);
+    var configuredSecret = PropertiesService.getScriptProperties().getProperty('LITHYNOVA_SYNC_SECRET');
+    if (!configuredSecret || payload.secret !== configuredSecret) {
+      throw new Error('Invalid or missing sync secret.');
+    }
     if (payload.action === 'ping') {
       return ContentService.createTextOutput(JSON.stringify({ status: 'SUCCESS', message: 'Connected to Client Google Sheet!', sheetTitle: ss.getName() })).setMimeType(ContentService.MimeType.JSON);
     }
@@ -3221,7 +3225,8 @@ function openGoogleSheetsModal() {
         3. Click <strong>Deploy ➔ New Deployment</strong>.<br>
         4. Click Gear Icon ⚙ ➔ Select <strong>Web app</strong>.<br>
         5. Set <em>Execute as:</em> <strong>Me (client@gmail.com)</strong> &amp; <em>Who has access:</em> <strong>Anyone</strong>.<br>
-        6. Click <strong>Deploy</strong>, complete Google authorization, and copy the generated <strong>Web app URL</strong> below:
+        6. In Apps Script <strong>Project Settings ➔ Script properties</strong>, add <code>LITHYNOVA_SYNC_SECRET</code> with the same private secret entered below.<br>
+        7. Click <strong>Deploy</strong>, complete Google authorization, and copy the generated <strong>Web app URL</strong> below:
       </div>
       <div class="field">
         <label style="font-weight:700;font-size:11px;">Client Google Apps Script Web App URL *</label>
