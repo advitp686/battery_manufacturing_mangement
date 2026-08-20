@@ -198,6 +198,8 @@ router.post('/api/operations/sale', asyncRoute(async (req, res) => {
     if (!invoice.invoice || !invoice.party || !items.length) throw badRequest('Invoice, party, and at least one item are required');
     const serials = items.map(item => item.packSerial).filter(Boolean);
     if (new Set(serials).size !== serials.length) throw operationError('A battery serial cannot appear twice on one invoice', 422);
+    const chassisNumbers = items.map(item => item.chassisVin).filter(Boolean);
+    if (new Set(chassisNumbers).size !== chassisNumbers.length) throw operationError('A vehicle chassis number cannot appear twice on one invoice', 422);
     await withTransaction(async client => {
         for (const serial of serials) {
             const production = (await query('SELECT * FROM production WHERE serial = $1 FOR UPDATE', [serial], client)).rows[0];
@@ -205,6 +207,11 @@ router.post('/api/operations/sale', asyncRoute(async (req, res) => {
             if (['Sold (Retail)', 'Dispatched (Dealer)'].includes(production.status)) throw operationError(`Battery ${serial} has already been sold`, 409);
             const existingSale = (await query('SELECT 1 FROM sales WHERE pack = $1 LIMIT 1', [serial], client)).rows[0];
             if (existingSale) throw operationError(`Battery ${serial} already has a dispatch record`, 409);
+        }
+        for (const chassisNo of chassisNumbers) {
+            const vehicle = (await query('SELECT * FROM vehicles WHERE chassis_no = $1 FOR UPDATE', [chassisNo], client)).rows[0];
+            if (!vehicle) throw operationError(`Vehicle chassis not found: ${chassisNo}`, 422);
+            if (vehicle.status && vehicle.status !== 'Available in Showroom') throw operationError(`Vehicle ${chassisNo} has already been sold`, 409);
         }
         const { items: ignoredItems, ...invoiceRow } = invoice;
         await insert('invoices', invoiceRow, client);
@@ -228,6 +235,9 @@ router.post('/api/operations/sale', asyncRoute(async (req, res) => {
                 const end = new Date(start); end.setMonth(end.getMonth() + termMonths);
                 const status = invoice.warrantyStatus || (invoice.type === 'Retail' ? 'Active (Same Day Auto)' : 'Dealer Auto (+1 Month)');
                 await query('INSERT INTO warranties(pack,customer,registered,"end",status,term_months,activation_rule,activation_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(pack) DO UPDATE SET customer=EXCLUDED.customer,registered=EXCLUDED.registered,"end"=EXCLUDED."end",status=EXCLUDED.status,term_months=EXCLUDED.term_months,activation_rule=EXCLUDED.activation_rule,activation_date=EXCLUDED.activation_date', [item.packSerial, invoice.type === 'Retail' ? invoice.party : `${invoice.party} (Dealer Auto)`, start.toISOString().slice(0, 10), end.toISOString().slice(0, 10), status, termMonths, activationRule, start.toISOString().slice(0, 10)], client);
+            }
+            if (item.chassisVin) {
+                await query('UPDATE vehicles SET status = $1 WHERE chassis_no = $2', [invoice.type === 'Retail' ? 'Sold (Retail)' : 'Dispatched (Dealer)', item.chassisVin], client);
             }
         }
         const ledgerId = `LEDG-${crypto.randomUUID()}`;

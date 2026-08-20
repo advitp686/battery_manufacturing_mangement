@@ -595,6 +595,7 @@ function defaultGstRateForItem(item = {}, saleType = '') {
   const hsn = String(item.hsn || '').trim();
   const batteryHsn = String(settings.hsnBattery || '87116020').trim();
   const chargerHsn = String(settings.hsnCharger || '85044090').trim();
+  if (hsn === '87116010' || text.includes('vehicle') || text.includes('e-rickshaw') || text.includes('cargo loader')) return Number(settings.gstRateVehicle ?? 5);
   
   const batteryRate = Number(settings.gstRateBattery ?? settings.gstRate ?? 5);
   const chargerRate = Number(settings.gstRateCharger ?? 18);
@@ -3604,6 +3605,11 @@ function openModal(kind) {
         }).join('')
       : '<option value="">No ready battery packs available in stock</option>';
 
+    const readyVehicles = (state.vehicles || []).filter(v => v.status === 'Available in Showroom');
+    const vehicleOptsHtml = readyVehicles.length > 0
+      ? readyVehicles.map(v => `<option value="${v.chassisNo}" data-model="${v.model}" data-hsn="${v.hsn || '87116010'}" data-price="${Number(v.price || 0)}">${v.model} — ${v.chassisNo} (₹${Number(v.price || 0).toLocaleString('en-IN')})</option>`).join('')
+      : '<option value="">No complete vehicles available in showroom stock</option>';
+
     const chargerStock = state.inventory.filter(i => 
       String(i.material || '').toLowerCase().includes('charger') || String(i.category || '').toLowerCase().includes('charger')
     );
@@ -3747,6 +3753,7 @@ function openModal(kind) {
               <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Item Category *</label>
               <select name="item_cat_${index}" class="item-cat-select" data-row="${index}" style="width:100%;box-sizing:border-box;padding:6px;font-size:11px;font-weight:700;">
                 <option value="battery">Ready Battery Pack (From Stock)</option>
+                <option value="vehicle">Complete Vehicle (From Stock)</option>
                 <option value="charger">Battery Charger (From Stock)</option>
                 <option value="accessory">Accessory / Component</option>
                 <option value="catalog">Master Catalogue Item</option>
@@ -3823,6 +3830,20 @@ function openModal(kind) {
           qtyWrap.innerHTML = `
             <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Qty <small style="font-size:9px;color:#718096;">(Fixed 1)</small></label>
             <input name="item_qty_${idx}" type="number" value="1" readonly class="calc-qty-input" data-row="${idx}" style="width:100%;box-sizing:border-box;padding:6px;font-size:12px;font-weight:700;text-align:center;background:#edf2f7;color:#4a5568;border:1px solid #cbd5e1;cursor:not-allowed;" title="Unique battery pack: Qty locked to 1 per row" />
+          `;
+        } else if (cat === 'vehicle') {
+          pickerWrap.innerHTML = `
+            <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Select Vehicle from Showroom Stock *</label>
+            <select name="item_select_${idx}" class="item-vehicle-select" data-row="${idx}" style="width:100%;box-sizing:border-box;padding:6px;font-size:11px;font-weight:700;">
+              <option value="">-- Select Complete Vehicle --</option>
+              ${vehicleOptsHtml}
+            </select>
+          `;
+          rowEl.querySelector(`#item_hsn_${idx}`).value = '87116010';
+          if (gstInput) gstInput.value = '5';
+          qtyWrap.innerHTML = `
+            <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Qty <small style="font-size:9px;color:#718096;">(Fixed 1)</small></label>
+            <input name="item_qty_${idx}" type="number" value="1" readonly class="calc-qty-input" data-row="${idx}" style="width:100%;box-sizing:border-box;padding:6px;font-size:12px;font-weight:700;text-align:center;background:#edf2f7;color:#4a5568;border:1px solid #cbd5e1;cursor:not-allowed;" />
           `;
         } else if (cat === 'charger') {
           pickerWrap.innerHTML = `
@@ -3901,6 +3922,20 @@ function openModal(kind) {
           const priceInput = rowEl.querySelector(`[name="item_price_${idx}"]`);
           if (priceInput) priceInput.value = '2500.00';
           if (gstInput) gstInput.value = '18';
+          recalculateTotals();
+        }
+      });
+
+      const vehicleSelect = rowEl.querySelector('.item-vehicle-select');
+      vehicleSelect?.addEventListener('change', (e) => {
+        const vehicle = (state.vehicles || []).find(v => v.chassisNo === e.target.value);
+        if (vehicle) {
+          rowEl.querySelector(`#item_desc_${idx}`).value = vehicle.model || 'Complete Vehicle';
+          rowEl.querySelector(`#item_serial_${idx}`).value = vehicle.chassisNo || '';
+          rowEl.querySelector(`#item_hsn_${idx}`).value = vehicle.hsn || '87116010';
+          const priceInput = rowEl.querySelector(`[name="item_price_${idx}"]`);
+          if (priceInput) priceInput.value = Number(vehicle.price || 0).toFixed(2);
+          if (gstInput) gstInput.value = String(Number(vehicle.gstRate || 5));
           recalculateTotals();
         }
       });
@@ -4823,21 +4858,39 @@ async function submitModal(e) {
     )).sort((a, b) => a - b);
 
     for (const idx of rowIndices) {
+      const category = data[`item_cat_${idx}`] || 'battery';
       const desc = data[`item_desc_${idx}`] || 'Battery / Accessory Item';
       const serial = data[`item_serial_${idx}`] || data[`item_select_${idx}`] || '';
       const hsn = data[`item_hsn_${idx}`] || '87116020';
       const qty = Number(data[`item_qty_${idx}`] || 1);
       const price = Number(data[`item_price_${idx}`] || 0);
 
-      items.push({
+      const item = {
         sr: idx + 1,
         desc: desc,
-        packSerial: serial,
+        category,
+        packSerial: category === 'battery' ? serial : '',
         hsn: hsn,
+        gstRate: Number(data[`item_gst_${idx}`] || 0),
         qty: qty,
         price: price,
         amount: qty * price
-      });
+      };
+      if (category === 'vehicle') {
+        const vehicle = (state.vehicles || []).find(v => v.chassisNo === serial);
+        if (vehicle) {
+          item.chassisVin = vehicle.chassisNo;
+          item.engineMotor = vehicle.motorNo || '';
+          item.color = vehicle.color || '';
+          item.keyController = vehicle.controllerNo || '';
+          item.batteryInfo = vehicle.batterySerial || '';
+        }
+        if (!item.chassisVin) {
+          toast('Select a complete vehicle from showroom stock for this line item.');
+          return;
+        }
+      }
+      items.push(item);
     }
 
     if (items.length === 0) {
@@ -4954,6 +5007,10 @@ async function submitModal(e) {
 
     // 5. Auto Warranty Activation for each battery pack in the sale!
     invoiceTotals.items.forEach(item => {
+      if (item.chassisVin) {
+        const vehicle = (state.vehicles || []).find(v => v.chassisNo === item.chassisVin);
+        if (vehicle) vehicle.status = isRetail ? 'Sold (Retail)' : 'Dispatched (Dealer)';
+      }
       if (item.packSerial) {
         // Update production status
         const prodItem = state.production.find(p => p.serial === item.packSerial);
@@ -4984,6 +5041,7 @@ async function submitModal(e) {
       }
     });
 
+    await saveState();
     render();
     closeModal();
     showView('sales');
@@ -6740,15 +6798,16 @@ function bind() {
     // EV Vehicle & Supplier button handlers
     if (e.target.id === 'btn-open-vehicle-sale-modal' || e.target.closest('.btn-sell-vehicle-model-direct')) {
       e.preventDefault();
-      openVehicleSaleModal();
+      showView('sales');
+      openModal('sale');
       return;
     }
 
     const sellVehDirectBtn = e.target.closest('.btn-sell-vehicle-direct');
     if (sellVehDirectBtn) {
       e.preventDefault();
-      const idx = Number(sellVehDirectBtn.dataset.idx);
-      openVehicleSaleModal(idx);
+      showView('sales');
+      openModal('sale');
       return;
     }
 
