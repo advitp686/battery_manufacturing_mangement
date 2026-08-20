@@ -1228,6 +1228,7 @@ function render() {
             <td><strong>${badge(p.status)}</strong></td>
             <td>
               <button class="secondary-btn btn-view-pack-qr" data-serial="${serial}" style="padding:3px 8px;font-size:11px;background:#ebf8ff;color:#2b6cb0;font-weight:700;">🖨️ QR Label</button>
+              <button class="secondary-btn btn-delete-production" data-idx="${state.production.indexOf(p)}" style="padding:3px 8px;font-size:11px;color:#c53030;background:#fff5f5;">Delete</button>
             </td>
           </tr>
         `;
@@ -1275,6 +1276,7 @@ function render() {
         const actionHtml = isAwaiting
           ? `<button class="primary-btn btn-run-qc" data-idx="${idx}" style="padding:4px 9px;font-size:11px;background:#2b6cb0;">⚡ Run QC Check</button>`
           : `<button class="secondary-btn btn-run-qc" data-idx="${idx}" style="padding:4px 8px;font-size:11px;background:#edf2f7;color:#2d3748;">✎ Re-inspect / Update QC</button>`;
+        const deleteHtml = `<button class="secondary-btn btn-delete-production" data-idx="${idx}" style="padding:4px 8px;font-size:11px;color:#c53030;background:#fff5f5;">Delete</button>`;
 
         return `
           <tr>
@@ -1285,7 +1287,7 @@ function render() {
             <td>${badge(p.qc)}</td>
             <td><strong>${p.serial}</strong></td>
             <td>${badge(p.status)}</td>
-            <td>${actionHtml}</td>
+            <td><div style="display:flex;gap:5px;flex-wrap:wrap;">${actionHtml}${deleteHtml}</div></td>
           </tr>
         `;
       }).join('');
@@ -2172,6 +2174,46 @@ async function deleteModel(modelIdx) {
 
   render();
   toast(`Deleted battery model: ${model.name}`);
+}
+
+async function deleteProductionRecord(productionIdx) {
+  if (!isUserAdmin()) {
+    toast('Access Denied: Production deletion requires Administrator role.');
+    return;
+  }
+
+  const production = state.production[productionIdx];
+  if (!production) return;
+
+  const packKeys = new Set([production.id, production.serial].filter(key => key && key !== '—'));
+  const salesRefs = (state.sales || []).filter(s => packKeys.has(s.pack));
+  const warrantyRefs = (state.warranties || []).filter(w => packKeys.has(w.pack));
+  const claimRefs = (state.claims || []).filter(c => packKeys.has(c.pack));
+  const dependencies = [
+    salesRefs.length && `${salesRefs.length} sale record(s)`,
+    warrantyRefs.length && `${warrantyRefs.length} warranty record(s)`,
+    claimRefs.length && `${claimRefs.length} claim record(s)`
+  ].filter(Boolean);
+
+  if (dependencies.length) {
+    toast(`${production.id} cannot be deleted: linked ${dependencies.join(', ')}. Resolve those records first.`);
+    return;
+  }
+
+  if (!confirm(`Delete production record ${production.id} (${production.serial})? This will remove it from the production queue and finished stock.`)) return;
+
+  const previousState = JSON.stringify(state);
+  state.production.splice(productionIdx, 1);
+  const persistence = await saveState({ immediate: true });
+  if (!persistence.ok && !persistence.localOnly) {
+    restoreStateSnapshot(previousState);
+    render();
+    toast('Production deletion was not posted to the hosted database.');
+    return;
+  }
+
+  render();
+  toast(`Deleted ${production.id} from PostgreSQL and local cache.`);
 }
 
 function issueReplacementModal(claimIdx) {
@@ -6221,6 +6263,13 @@ function bind() {
     if (runQcBtn) {
       e.preventDefault();
       runQcModal(runQcBtn.dataset.idx);
+      return;
+    }
+
+    const deleteProductionBtn = e.target.closest('.btn-delete-production');
+    if (deleteProductionBtn) {
+      e.preventDefault();
+      deleteProductionRecord(Number(deleteProductionBtn.dataset.idx));
       return;
     }
 
