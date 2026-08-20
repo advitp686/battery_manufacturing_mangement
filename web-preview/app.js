@@ -4646,8 +4646,20 @@ async function submitModal(e) {
   }
 
   if (kind === 'dealer') {
+    if (!String(data.name || '').trim() || !String(data.phone || '').trim()) {
+      toast('Dealer firm name and mobile number are required.');
+      return;
+    }
+    if (data.gstType === 'Registered Dealer' && !String(data.gstin || '').trim()) {
+      toast('GSTIN is required for a registered dealer.');
+      return;
+    }
+    if ((state.dealers || []).some(dealer => normalizeText(dealer.name) === normalizeText(data.name))) {
+      toast(`Dealer already exists in the Dealer Accounts Master: ${data.name}`);
+      return;
+    }
     const newDealer = {
-      id: `DLR-00${(state.dealers || []).length + 1}`,
+      id: `DLR-${Date.now()}`,
       name: data.name,
       title: data.title || 'M/s.',
       contactPerson: data.contactPerson || '',
@@ -4681,7 +4693,13 @@ async function submitModal(e) {
       });
     }
 
-    saveState();
+    const persistence = await saveState({ immediate: true });
+    if (!persistence.ok && !persistence.localOnly) {
+      restoreStateSnapshot(previousState);
+      render();
+      toast('Dealer was not posted to the hosted database. No dealer was created.');
+      return;
+    }
     render();
     toast(`Registered new Dealer Master Account: ${newDealer.name} (GSTIN: ${newDealer.gstin})`);
   }
