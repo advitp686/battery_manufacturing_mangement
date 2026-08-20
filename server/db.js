@@ -90,7 +90,8 @@ async function initDatabase() {
         CREATE TABLE IF NOT EXISTS purchase_bills (
             id TEXT PRIMARY KEY, bill_no TEXT NOT NULL, bill_date TEXT, eway_bill_no TEXT, supplier TEXT, vendor_gstin TEXT,
             taxable_value NUMERIC DEFAULT 0, cgst_amount NUMERIC DEFAULT 0, sgst_amount NUMERIC DEFAULT 0, igst_amount NUMERIC DEFAULT 0,
-            other_amount NUMERIC DEFAULT 0, vehicle_other_charges NUMERIC DEFAULT 0, tax_mode TEXT DEFAULT 'INTRA', grand_total NUMERIC DEFAULT 0
+            other_amount NUMERIC DEFAULT 0, vehicle_other_charges NUMERIC DEFAULT 0, tax_mode TEXT DEFAULT 'INTRA', grand_total NUMERIC DEFAULT 0,
+            payment_status TEXT DEFAULT 'Unpaid', payment_percent NUMERIC DEFAULT 0, paid_amount NUMERIC DEFAULT 0, balance_amount NUMERIC DEFAULT 0, payment_mode TEXT
         );
         CREATE TABLE IF NOT EXISTS purchase_bill_items (
             id BIGSERIAL PRIMARY KEY, bill_id TEXT NOT NULL REFERENCES purchase_bills(id) ON DELETE CASCADE,
@@ -119,6 +120,11 @@ async function initDatabase() {
             id TEXT PRIMARY KEY, bank_name TEXT, acc_type TEXT, acc_no TEXT, ifsc TEXT, branch TEXT,
             is_primary BOOLEAN DEFAULT FALSE
         );
+        ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'Unpaid';
+        ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS payment_percent NUMERIC DEFAULT 0;
+        ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS paid_amount NUMERIC DEFAULT 0;
+        ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS balance_amount NUMERIC DEFAULT 0;
+        ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS payment_mode TEXT;
         CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS sync_log (
             id BIGSERIAL PRIMARY KEY, table_name TEXT, record_count INTEGER, action TEXT,
