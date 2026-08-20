@@ -2721,7 +2721,7 @@ const modalSchemas = {
   production: {
     title: 'Create production record',
     fields: [
-      ['model', 'Battery model', 'select', ['LFP City 3.2kWh', 'LFP Cargo 5.1kWh', 'NMC Sprint 2.8kWh']],
+      ['model', 'Battery model', 'select', []],
       ['operator', 'Operator', 'text', 'Production Lead'],
       ['batch', 'Cell batch', 'select', ['CATL-LFP-280-07', 'NMC-21700-06']],
       ['quantity', 'Packs to build', 'number', '1'],
@@ -3364,8 +3364,10 @@ function openModal(kind) {
       <div class="form-grid">
         ${schema.fields.map(f => {
           const [name, label, type, def] = f;
-          if (type === 'select') {
-            const options = name === 'warrantyActivationRule'
+        if (type === 'select') {
+          const options = kind === 'production' && name === 'model'
+            ? (state.models || []).filter(model => model.status !== 'Archived').map(model => `<option value="${model.name}">${model.name} (${model.code || 'No code'})</option>`).join('') || '<option value="">No battery models available</option>'
+            : name === 'warrantyActivationRule'
               ? '<option value="sale_type_default">Retail: sale day · Dealer: +1 month</option>'
               : def.map(v => `<option>${v}</option>`).join('');
             return `<div class="field"><label for="field-${name}">${label}</label><select id="field-${name}" name="${name}">${options}</select></div>`;
@@ -3951,7 +3953,14 @@ function openModal(kind) {
       ${schema.fields.map(f => {
         const [name, label, type, def] = f;
         const inputAttrs = type === 'number' ? numericInputAttributes(name) : '';
-        if (type === 'select') return `<div class="field"><label for="field-${name}">${label}</label><select id="field-${name}" name="${name}">${def.map(v => `<option>${v}</option>`).join('')}</select></div>`;
+        if (type === 'select') {
+          const options = kind === 'production' && name === 'model'
+            ? (state.models || []).filter(model => model.status !== 'Archived').map(model => `<option value="${model.name}">${model.name} (${model.code || 'No code'})</option>`).join('') || '<option value="">No battery models available</option>'
+            : name === 'warrantyActivationRule'
+              ? '<option value="sale_type_default">Retail: sale day · Dealer: +1 month</option>'
+              : def.map(v => `<option>${v}</option>`).join('');
+          return `<div class="field"><label for="field-${name}">${label}</label><select id="field-${name}" name="${name}">${options}</select></div>`;
+        }
         return `<div class="field ${type === 'textarea' ? 'full' : ''}"><label for="field-${name}">${label}</label>${type === 'textarea' ? `<textarea id="field-${name}" name="${name}">${def}</textarea>` : `<input id="field-${name}" name="${name}" type="${type}" value="${def}"${inputAttrs} />`}</div>`;
       }).join('')}
     </div>
@@ -4656,8 +4665,14 @@ async function submitModal(e) {
       return;
     }
 
+    const selectedModel = (state.models || []).find(model => normalizeText(model.name) === normalizeText(data.model) && model.status !== 'Archived');
+    if (!selectedModel) {
+      toast('Select a battery model from the active Master Battery Models catalog.');
+      return;
+    }
+
     if (_serverOnline) {
-      const response = await fetch('/api/operations/production', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: nextProductionId(), model: data.model, operator: data.operator, qc: 'Awaiting', status: 'In QC' }) });
+      const response = await fetch('/api/operations/production', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: nextProductionId(), model: selectedModel.name, operator: data.operator, qc: 'Awaiting', status: 'In QC' }) });
       if (!response.ok) { const error = await response.json().catch(() => ({})); toast(`Production rejected: ${error.error || response.status}`); return; }
       await refreshHostedState(); closeModal(); showView('production'); toast('Production build recorded and BOM stock consumed atomically.'); return;
     }
@@ -4666,7 +4681,7 @@ async function submitModal(e) {
     const todayStr = new Date().toISOString().split('T')[0];
     state.production.unshift({
       id: newProdId,
-      model: data.model,
+      model: selectedModel.name,
       operator: data.operator,
       built: todayStr,
       qc: 'Awaiting',
@@ -4675,7 +4690,7 @@ async function submitModal(e) {
     });
 
     // Auto-deduct BOM components from inventory stock
-    const modelObj = (state.models || []).find(m => m.name === data.model);
+    const modelObj = selectedModel;
     if (modelObj && Array.isArray(modelObj.bom)) {
       modelObj.bom.forEach(bomItem => {
         const invItem = (state.inventory || []).find(inv => 
