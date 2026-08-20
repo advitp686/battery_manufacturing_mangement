@@ -16,7 +16,7 @@ const TABLES = [
     'components', 'models', 'model_bom', 'inventory', 'production', 'dealers', 'sales',
     'invoices', 'invoice_items', 'ledger', 'warranties', 'claims', 'suppliers',
     'supplier_ledger', 'purchase_bills', 'purchase_bill_items', 'vehicle_models',
-    'vehicles', 'vehicle_invoices', 'bank_accounts', 'system_settings', 'sync_log'
+    'vehicles', 'vehicle_invoices', 'bank_accounts', 'system_settings', 'sync_log', 'auth_users'
 ];
 
 async function initDatabase() {
@@ -51,7 +51,7 @@ async function initDatabase() {
         );
         CREATE TABLE IF NOT EXISTS sales (
             id BIGSERIAL PRIMARY KEY, invoice TEXT NOT NULL, pack TEXT, party TEXT, type TEXT, gstin TEXT, date TEXT, warranty TEXT,
-            amount NUMERIC DEFAULT 0, "desc" TEXT
+            amount NUMERIC DEFAULT 0, "desc" TEXT, status TEXT DEFAULT 'Active', cancel_reason TEXT, cancelled_at TEXT
         );
         CREATE TABLE IF NOT EXISTS invoices (
             invoice TEXT PRIMARY KEY, date TEXT, party TEXT, father_name TEXT, phone TEXT, address TEXT,
@@ -146,11 +146,18 @@ async function initDatabase() {
             status TEXT, error TEXT, timestamp TEXT
         );
         CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS auth_users (
+            username TEXT PRIMARY KEY, role TEXT NOT NULL, password_hash TEXT NOT NULL,
+            active BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_no ON invoice_items(invoice_no)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_model_bom_model_code ON model_bom(model_code)`);
     await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS amount NUMERIC DEFAULT 0`);
     await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS "desc" TEXT`);
+    await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Active'`);
+    await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS cancel_reason TEXT`);
+    await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS cancelled_at TEXT`);
     await pool.query(`ALTER TABLE claims ADD COLUMN IF NOT EXISTS notes TEXT`);
     await pool.query(`ALTER TABLE components ADD COLUMN IF NOT EXISTS cgst_rate NUMERIC DEFAULT 0`);
     await pool.query(`ALTER TABLE purchase_bills ADD COLUMN IF NOT EXISTS cgst_amount NUMERIC DEFAULT 0`);

@@ -33,10 +33,10 @@ python -m http.server 4173 --directory web-preview
 
 | Profile Role | Default Password / Mode | Capabilities |
 | :--- | :--- | :--- |
-| **👨‍💼 Administrator** | `ChangeMe123!` | Full unrestricted access to System Settings, BOM pricing, Stock management, Reports, Reset & Data Backup tools. |
-| **👤 Reception Staff** | *None (Unlocked)* | Daily reception operations: Record Sales, Customer Ledger, Warranty Registrations & QR Label rendering. |
+| **👨‍💼 Administrator** | Configure `ADMIN_PASSWORD` in the hosted environment | Full unrestricted access to System Settings, BOM pricing, Stock management, Reports, Reset & Data Backup tools. |
+| **👤 Reception Staff** | Configure `STAFF_PASSWORD` if staff login is required | Daily reception operations: Record Sales, Customer Ledger, Warranty Registrations & QR Label rendering. |
 
-> 🔒 **Security Note**: Switching from Reception Staff to Administrator mode requires entering the Admin Password (`ChangeMe123!`). The Administrator can change this password anytime in **System Settings ➔ Company Profile**.
+> 🔒 **Security Note**: Never commit or share production passwords. The Administrator can change the password from **System Settings ➔ Company Profile** after the first deployment; the new value is stored as a server-side hash.
 
 ---
 

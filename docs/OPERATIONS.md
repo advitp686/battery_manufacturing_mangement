@@ -3,7 +3,7 @@
 ## First Use & Profile Access
 
 1. Open the Web Application in your web browser (e.g. via `.\start-app.ps1` or `npm start`).
-2. Switch to **Administrator** profile (Default password: `ChangeMe123!`). Change the admin password in **System Settings ➔ Company Profile** before logging production data.
+2. Sign in with the administrator password configured in Render (`ADMIN_PASSWORD`). Change it from **System Settings ➔ Company Profile** before logging production data.
 3. Configure battery models, component HSN/GST rates, and initial raw material stock batches.
 4. Finished packs are assembled via **Production & QC**. Passing QC marks a pack as `Saleable` and generates its ISO QR code and unique serial number.
 

@@ -530,8 +530,14 @@ const DEFAULT_SYSTEM_SETTINGS = {
   phone: '',
   email: '',
   gstRate: 5,
+  gstRateBattery: 5,
+  gstRateVehicle: 5,
+  gstRateCharger: 18,
+  gstRateAccessory: 18,
+  gstRateService: 18,
   hsnBattery: '87116020',
   hsnCharger: '85044090',
+  hsnVehicle: '87116010',
   adminPassword: ''
 };
 
@@ -595,12 +601,12 @@ function defaultGstRateForItem(item = {}, saleType = '') {
   const hsn = String(item.hsn || '').trim();
   const batteryHsn = String(settings.hsnBattery || '87116020').trim();
   const chargerHsn = String(settings.hsnCharger || '85044090').trim();
-  if (hsn === '87116010' || text.includes('vehicle') || text.includes('e-rickshaw') || text.includes('cargo loader')) return Number(settings.gstRateVehicle ?? 5);
+  if (hsn === String(settings.hsnVehicle || '87116010').trim() || text.includes('vehicle') || text.includes('e-rickshaw') || text.includes('cargo loader')) return Number(settings.gstRateVehicle ?? settings.gstRate);
   
-  const batteryRate = Number(settings.gstRateBattery ?? settings.gstRate ?? 5);
-  const chargerRate = Number(settings.gstRateCharger ?? 18);
-  const accessoryRate = Number(settings.gstRateAccessory ?? 18);
-  const serviceRate = Number(settings.gstRateService ?? 18);
+  const batteryRate = Number(settings.gstRateBattery ?? settings.gstRate);
+  const chargerRate = Number(settings.gstRateCharger ?? settings.gstRate);
+  const accessoryRate = Number(settings.gstRateAccessory ?? settings.gstRate);
+  const serviceRate = Number(settings.gstRateService ?? settings.gstRate);
 
   if (hsn === batteryHsn || text.includes('battery') || text.includes('pack') || text.includes('lfp') || text.includes('nmc')) return batteryRate;
   if (hsn === chargerHsn || text.includes('charger') || text.includes('power unit')) return chargerRate;
@@ -612,7 +618,7 @@ function defaultGstRateForItem(item = {}, saleType = '') {
 function getVehicleGstRate(vehicle = {}) {
   const settings = getSystemSettings();
   const model = (state.vehicleModels || []).find(vm => normalizeText(vm.name) === normalizeText(vehicle.model) || vm.id === vehicle.modelNo);
-  return Number(vehicle.gstRate ?? model?.gstRate ?? settings.gstRateVehicle ?? settings.gstRate ?? 0);
+  return Number(vehicle.gstRate ?? model?.gstRate ?? settings.gstRateVehicle ?? settings.gstRate);
 }
 
 function getConfiguredGstRate(kind = '') {
@@ -780,7 +786,7 @@ function allocatePaymentToPartyInvoices(partyName, paymentAmount) {
   }
 }
 
-function cancelSalesInvoice(invNo, reason = 'User requested cancellation') {
+async function cancelSalesInvoice(invNo, reason = 'User requested cancellation') {
   if (!invNo) return;
   const inv = (state.invoices || []).find(i => i.invoice === invNo);
   if (!inv) {
@@ -792,49 +798,25 @@ function cancelSalesInvoice(invNo, reason = 'User requested cancellation') {
     return;
   }
 
+  if (!_serverOnline) {
+    toast('Invoice cancellation requires a live hosted database connection. No local cancellation was recorded.');
+    return;
+  }
+
   if (!confirm(`Are you sure you want to cancel Tax Invoice ${invNo}?\n\nThis will:\n• Reverse party ledger balance\n• Restore battery pack(s) to Saleable stock\n• Cancel active warranty coverage`)) {
     return;
   }
 
-  const todayStr = new Date().toISOString().split('T')[0];
-
-  inv.balanceAmount = 0;
-  inv.warrantyStatus = 'Cancelled';
-
-  const partyKey = normalizeText(inv.party);
-  let debitSum = 0;
-  let creditSum = 0;
-  state.ledger.filter(l => normalizeText(l.party) === partyKey).forEach(l => {
-  debitSum += ledgerMoney(l.debit);
-  creditSum += ledgerMoney(l.credit);
+  const response = await fetch(`/api/operations/sale/${encodeURIComponent(invNo)}/cancel`, {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason })
   });
-
-  state.ledger.unshift({
-    id: 'LEDG-CN-' + Date.now().toString().slice(-4),
-    date: todayStr,
-    party: inv.party,
-    partyType: inv.type,
-    ref: 'CN-' + invNo.replace(/[\/]/g, '-'),
-    desc: `Sale Cancellation (${invNo}) — ${reason}`,
-    debit: 0,
-    credit: inv.grandTotal,
-    balance: roundMoney((debitSum - creditSum) - inv.grandTotal),
-    bankAccount: 'Sale Cancellation Reversal'
-  });
-
-  (inv.items || []).forEach(item => {
-    if (item.packSerial) {
-      const pack = (state.production || []).find(p => p.serial === item.packSerial || p.id === item.packSerial);
-      if (pack) pack.status = 'Saleable';
-
-      const w = (state.warranties || []).find(war => war.pack === item.packSerial);
-      if (w) w.status = 'Cancelled';
-    }
-  });
-
-  saveState();
-  render();
-  toast(`❌ Tax Invoice ${invNo} has been cancelled.`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    toast(`Cancellation rejected: ${error.error || response.status}`);
+    return;
+  }
+  await refreshHostedState();
+  toast(`❌ Tax Invoice ${invNo} was cancelled transactionally.`);
 }
 
 function isUserAdmin() {
@@ -1011,7 +993,7 @@ function syncToGoogleSheets(manual = false) {
 
   const nowTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
   const webappUrl = localStorage.getItem('tejas_appscript_url');
-  const syncSecret = localStorage.getItem('tejas_sync_secret') || 'SYNC_SECRET_DEFAULT';
+  const syncSecret = localStorage.getItem('tejas_sync_secret') || '';
   const clientName = localStorage.getItem('tejas_client_account_name') || 'Client Account';
   const isConfigured = Boolean(webappUrl);
   const syncLabel = isConfigured ? `Push queued at ${nowTime}` : 'Local only - configure Google Sheets';
@@ -1042,8 +1024,8 @@ function syncToGoogleSheets(manual = false) {
     el.className = isConfigured ? 'log-dot amber' : 'log-dot neutral';
   });
 
-  if (!isConfigured) {
-    if (manual) toast('Google Sheets sync is not configured. Add an Apps Script URL first.');
+  if (!isConfigured || !syncSecret) {
+    if (manual) toast(!isConfigured ? 'Google Sheets sync is not configured. Add an Apps Script URL first.' : 'Google Sheets sync secret is missing. Configure it before syncing.');
     return;
   }
 
@@ -1065,16 +1047,16 @@ function syncToGoogleSheets(manual = false) {
     })
   })
     .then(() => {
-      if (statusTextEl) statusTextEl.textContent = `${clientName} Google Sheet push sent (${nowTime})`;
+      if (statusTextEl) statusTextEl.textContent = `${clientName} Google Sheet push request sent (${nowTime})`;
       if (syncDotEl) syncDotEl.className = 'status-dot green';
       logStatuses.forEach(el => {
-        el.textContent = '● Push sent';
+        el.textContent = '● Request sent';
         el.style.color = '#2f855a';
       });
       logDots.forEach(el => {
         el.className = 'log-dot green';
       });
-      if (manual) toast(`Push sent to ${clientName}'s Google Sheet. Verify the sheet for final receipt.`);
+      if (manual) toast(`Push request sent to ${clientName}'s Google Sheet. Verify the sheet for final receipt.`);
     })
     .catch(e => {
       console.warn('Cloud sync post warning:', e);
@@ -1976,12 +1958,14 @@ function populateSettingsUI() {
   if ($('#set-company-phone')) $('#set-company-phone').value = settings.phone || '';
   if ($('#set-company-email')) $('#set-company-email').value = settings.email || '';
   
-  if ($('#set-gst-rate-battery')) $('#set-gst-rate-battery').value = settings.gstRateBattery ?? settings.gstRate ?? 5;
-  if ($('#set-gst-rate-charger')) $('#set-gst-rate-charger').value = settings.gstRateCharger ?? 18;
-  if ($('#set-gst-rate-accessory')) $('#set-gst-rate-accessory').value = settings.gstRateAccessory ?? 18;
-  if ($('#set-gst-rate-service')) $('#set-gst-rate-service').value = settings.gstRateService ?? 18;
+  if ($('#set-gst-rate-battery')) $('#set-gst-rate-battery').value = settings.gstRateBattery ?? settings.gstRate;
+  if ($('#set-gst-rate-vehicle')) $('#set-gst-rate-vehicle').value = settings.gstRateVehicle ?? settings.gstRate;
+  if ($('#set-gst-rate-charger')) $('#set-gst-rate-charger').value = settings.gstRateCharger ?? settings.gstRate;
+  if ($('#set-gst-rate-accessory')) $('#set-gst-rate-accessory').value = settings.gstRateAccessory ?? settings.gstRate;
+  if ($('#set-gst-rate-service')) $('#set-gst-rate-service').value = settings.gstRateService ?? settings.gstRate;
 
   if ($('#set-hsn-battery')) $('#set-hsn-battery').value = settings.hsnBattery || '87116020';
+  if ($('#set-hsn-vehicle')) $('#set-hsn-vehicle').value = settings.hsnVehicle || '87116010';
   if ($('#set-hsn-charger')) $('#set-hsn-charger').value = settings.hsnCharger || '85044090';
   if ($('#set-admin-password')) $('#set-admin-password').value = '';
 
@@ -3016,7 +3000,7 @@ function openRepairInvoiceModal(claimIdx) {
   backdrop.style.justifyContent = 'center';
   backdrop.dataset.kind = 'repair-invoice';
 
-  addRepairItemRow('Cell Balancing & Inspection Service', '85044090', 18, 500, 1);
+  addRepairItemRow('Cell Balancing & Inspection Service', '85044090', getConfiguredGstRate('Service'), 500, 1);
 
   $('#repair-party-input')?.addEventListener('input', (e) => {
     const val = e.target.value.trim();
@@ -3030,10 +3014,10 @@ function openRepairInvoiceModal(claimIdx) {
     }
   });
 
-  $('#btn-add-repair-item')?.addEventListener('click', () => addRepairItemRow('', '85044090', 18, 0, 1));
+  $('#btn-add-repair-item')?.addEventListener('click', () => addRepairItemRow('', '85044090', getConfiguredGstRate('Service'), 0, 1));
 }
 
-function addRepairItemRow(name = '', hsn = '85044090', gst = 18, price = 0, qty = 1) {
+function addRepairItemRow(name = '', hsn = '85044090', gst = getConfiguredGstRate('Service'), price = 0, qty = 1) {
   const container = $('#repair-items-container');
   if (!container) return;
 
@@ -3762,7 +3746,7 @@ function openModal(kind) {
       function renderItemRowHtml(index) {
       const settings = getSystemSettings();
       const batteryHsn = String(settings.hsnBattery || '87116020').trim();
-      const batteryRate = Number(settings.gstRate || 5);
+      const batteryRate = Number(settings.gstRateBattery ?? settings.gstRate);
       return `
         <div class="invoice-item-row" data-row-idx="${index}" style="background:#fff;border:1px solid #cbd5e1;padding:10px 12px;border-radius:8px;box-sizing:border-box;width:100%;margin-bottom:10px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #e2e8f0;">
@@ -3848,7 +3832,7 @@ function openModal(kind) {
             </select>
           `;
           rowEl.querySelector(`#item_hsn_${idx}`).value = String(getSystemSettings().hsnBattery || '87116020').trim();
-          if (gstInput) gstInput.value = String(Number(getSystemSettings().gstRate || 5));
+          if (gstInput) gstInput.value = String(Number(getSystemSettings().gstRateBattery ?? getSystemSettings().gstRate));
           qtyWrap.innerHTML = `
             <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Qty <small style="font-size:9px;color:#718096;">(Fixed 1)</small></label>
             <input name="item_qty_${idx}" type="number" value="1" readonly class="calc-qty-input" data-row="${idx}" style="width:100%;box-sizing:border-box;padding:6px;font-size:12px;font-weight:700;text-align:center;background:#edf2f7;color:#4a5568;border:1px solid #cbd5e1;cursor:not-allowed;" title="Unique battery pack: Qty locked to 1 per row" />
@@ -3861,8 +3845,8 @@ function openModal(kind) {
               ${vehicleOptsHtml}
             </select>
           `;
-          rowEl.querySelector(`#item_hsn_${idx}`).value = '87116010';
-          if (gstInput) gstInput.value = '5';
+          rowEl.querySelector(`#item_hsn_${idx}`).value = String(getSystemSettings().hsnVehicle || '87116010');
+          if (gstInput) gstInput.value = String(getConfiguredGstRate('Vehicle'));
           qtyWrap.innerHTML = `
             <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Qty <small style="font-size:9px;color:#718096;">(Fixed 1)</small></label>
             <input name="item_qty_${idx}" type="number" value="1" readonly class="calc-qty-input" data-row="${idx}" style="width:100%;box-sizing:border-box;padding:6px;font-size:12px;font-weight:700;text-align:center;background:#edf2f7;color:#4a5568;border:1px solid #cbd5e1;cursor:not-allowed;" />
@@ -3926,10 +3910,10 @@ function openModal(kind) {
         if (pack) {
           rowEl.querySelector(`#item_desc_${idx}`).value = pack.model;
           rowEl.querySelector(`#item_serial_${idx}`).value = serial;
-          rowEl.querySelector(`#item_hsn_${idx}`).value = '87116020';
+          rowEl.querySelector(`#item_hsn_${idx}`).value = String(getSystemSettings().hsnBattery || '87116020');
           const priceInput = rowEl.querySelector(`[name="item_price_${idx}"]`);
           if (priceInput) priceInput.value = '65000.00';
-          if (gstInput) gstInput.value = String(Number(getSystemSettings().gstRate || 5));
+          if (gstInput) gstInput.value = String(Number(getSystemSettings().gstRateBattery ?? getSystemSettings().gstRate));
           recalculateTotals();
         }
       });
@@ -3954,10 +3938,10 @@ function openModal(kind) {
         if (vehicle) {
           rowEl.querySelector(`#item_desc_${idx}`).value = vehicle.model || 'Complete Vehicle';
           rowEl.querySelector(`#item_serial_${idx}`).value = vehicle.chassisNo || '';
-          rowEl.querySelector(`#item_hsn_${idx}`).value = vehicle.hsn || '87116010';
+          rowEl.querySelector(`#item_hsn_${idx}`).value = vehicle.hsn || getSystemSettings().hsnVehicle || '87116010';
           const priceInput = rowEl.querySelector(`[name="item_price_${idx}"]`);
           if (priceInput) priceInput.value = Number(vehicle.price || 0).toFixed(2);
-          if (gstInput) gstInput.value = String(Number(vehicle.gstRate || 5));
+          if (gstInput) gstInput.value = String(Number(vehicle.gstRate ?? getConfiguredGstRate('Vehicle')));
           recalculateTotals();
         }
       });
@@ -4149,6 +4133,10 @@ async function submitModal(e) {
   }
 
   if (kind === 'repair-invoice') {
+    if (!_serverOnline) {
+      toast('Repair invoices require a live hosted database connection. No local repair invoice was recorded.');
+      return;
+    }
     const claimIdx = Number(data.claimIdx);
     const claim = (state.claims || [])[claimIdx];
     const party = data.party || 'Walk-in Repair Customer';
@@ -4167,7 +4155,7 @@ async function submitModal(e) {
     const items = itemDescs.map((desc, i) => {
       const price = Number(itemPrices[i] || 0);
       const qty = Number(itemQtys[i] || 1);
-      const gstRate = Number(itemGsts[i] || 18);
+      const gstRate = Number(itemGsts[i] || getConfiguredGstRate('Service'));
       const amount = price * qty;
       const gstAmount = amount * gstRate / 100;
 
@@ -4195,13 +4183,14 @@ async function submitModal(e) {
       phone: data.phone || '',
       address: data.address || '',
       partyState: customerState,
+      taxMode: 'INTRA',
       type: (state.dealers || []).some(d => normalizeText(d.name) === normalizeText(party)) ? 'Dealer' : 'Retail',
       date: new Date().toISOString().split('T')[0],
       items,
       taxableValue,
-      cgstRate: 9,
+      cgstRate: 0,
       cgstAmount: totalGst / 2,
-      sgstRate: 9,
+      sgstRate: 0,
       sgstAmount: totalGst / 2,
       grandTotal,
       amountInWords: numberToWords(grandTotal),
@@ -4209,6 +4198,27 @@ async function submitModal(e) {
       balanceAmount: grandTotal - paidAmount,
       warrantyStatus: 'Warranty Repair Service'
     };
+
+    if (_serverOnline) {
+      if (!claim?.claim) {
+        toast('A saved warranty claim is required before posting a repair invoice.');
+        return;
+      }
+      const response = await fetch('/api/operations/claim', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'repair', claim: claim.claim, party, customerState, invoice: newInvoice, items, status: 'Resolved', outcome: 'Repaired' })
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        toast(`Repair invoice rejected: ${error.error || response.status}`);
+        return;
+      }
+      await refreshHostedState();
+      closeModal();
+      showView('warranty');
+      toast(`Repair invoice ${invNo} posted transactionally.`);
+      return;
+    }
 
     state.invoices.unshift(newInvoice);
 
@@ -4245,6 +4255,7 @@ async function submitModal(e) {
       claim.outcome = 'Repaired & Billed (' + invNo + ')';
     }
 
+    await saveState({ immediate: true });
     render();
     closeModal();
     toast(`🧾 Generated Repair Invoice ${invNo} (${paidAmount >= grandTotal ? 'Paid' : 'Posted to Ledger'})`);
@@ -4608,8 +4619,8 @@ async function submitModal(e) {
       type: data.type || 'Passenger 3W E-Rickshaw',
       motor: data.motor || '1200W BLDC Heavy Duty',
       batterySpec: data.batterySpec || 'LFP 51.2V 100Ah',
-      hsn: data.hsn || '87116010',
-      gstRate: Number(data.gstRate || 5),
+      hsn: data.hsn || getSystemSettings().hsnVehicle || '87116010',
+      gstRate: Number(data.gstRate || getConfiguredGstRate('Vehicle')),
       price: Number(data.price || 145000)
     };
     if (!state.vehicleModels) state.vehicleModels = [];
@@ -5129,53 +5140,27 @@ async function submitModal(e) {
 
     const bankAccount = data.credit_mode || 'HDFC Bank Current A/C (50200012345678)';
     const todayStr = data.credit_date || new Date().toISOString().split('T')[0];
-    const isDealer = (state.dealers || []).some(d => normalizeText(d.name) === normalizeText(party));
+    const hostedIsDealer = (state.dealers || []).some(d => normalizeText(d.name) === normalizeText(party));
 
-    // Fix #2 & #10: FIFO Payment Allocation across unpaid invoices for party
-    allocatePaymentToPartyInvoices(party, amount);
-
-    const partyKey = normalizeText(party);
-    let partyDebit = 0;
-    let partyCredit = 0;
-    state.ledger.filter(l => normalizeText(l.party) === partyKey).forEach(l => {
-      partyDebit += ledgerMoney(l.debit);
-      partyCredit += ledgerMoney(l.credit);
-    });
-
-    state.ledger.unshift({
-      id: 'LEDG-P-' + Date.now().toString().slice(-4),
-      date: todayStr,
-      party: party,
-      partyType: isDealer ? 'Dealer' : 'Customer',
-      ref: data.credit_ref || ('PAY-' + Date.now().toString().slice(-4)),
-      desc: `Payment Received via ${bankAccount} (${data.credit_notes || 'Credit'})`,
-      debit: 0.00,
-      credit: amount,
-      balance: roundMoney((partyDebit - partyCredit) - amount),
-      bankAccount
-    });
-
-    saveState();
-    render();
-
-    // Auto-sync selected party dropdowns across both Retail and Dealer ledgers
-    const ledgerSelect = $('#ledger-party-select');
-    if (ledgerSelect) {
-      if (![...ledgerSelect.options].some(o => o.value === party)) {
-        ledgerSelect.insertAdjacentHTML('beforeend', `<option value="${party}">${party}</option>`);
+    if (_serverOnline) {
+      const response = await fetch('/api/operations/payment', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ party, amount, date: todayStr, bankAccount, partyType: hostedIsDealer ? 'Dealer' : 'Customer', ref: data.credit_ref, notes: data.credit_notes })
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        toast(`Payment rejected: ${error.error || response.status}`);
+        return;
       }
-      ledgerSelect.value = party;
-      renderLedger();
+      await refreshHostedState();
+      closeModal();
+      toast(`Recorded payment credit of ₹${amount.toLocaleString('en-IN')} for ${party}.`);
+      return;
     }
 
-    const dealerSelect = $('#dealer-statement-select');
-    if (dealerSelect && isDealer) {
-      dealerSelect.value = party;
-      renderDealerStatement();
-    }
+    toast('Payments require a live hosted database connection. No local payment was recorded.');
+    return;
 
-    closeModal();
-    toast(`Recorded payment credit of ₹${amount.toLocaleString('en-IN')} for ${party} (allocated to invoices)`);
   }
 
   if (kind === 'credit-note') {
@@ -5187,6 +5172,25 @@ async function submitModal(e) {
     }
     const todayStr = data.date || new Date().toISOString().split('T')[0];
     const cnNo = 'CN-' + Date.now().toString().slice(-6);
+    const hostedCreditIsDealer = (state.dealers || []).some(d => normalizeText(d.name) === normalizeText(party));
+
+    if (!_serverOnline) {
+      toast('Credit notes require a live hosted database connection. No local credit note was recorded.');
+      return;
+    }
+    const creditResponse = await fetch('/api/operations/ledger-entry', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entryType: 'credit-note', party, amount, date: todayStr, invoice: data.invoice, partyType: hostedCreditIsDealer ? 'Dealer' : 'Customer', ref: cnNo, reason: `Credit Note: ${data.reason}${data.invoice ? ` (Invoice ${data.invoice})` : ''}` })
+    });
+    if (!creditResponse.ok) {
+      const error = await creditResponse.json().catch(() => ({}));
+      toast(`Credit note rejected: ${error.error || creditResponse.status}`);
+      return;
+    }
+    await refreshHostedState();
+    closeModal();
+    toast(`Issued Credit Note ${cnNo} of ₹${amount.toLocaleString('en-IN')} for ${party}`);
+    return;
 
     if (data.invoice) {
       const inv = (state.invoices || []).find(i => i.invoice === data.invoice);
@@ -5234,6 +5238,24 @@ async function submitModal(e) {
     }
     const todayStr = data.date || new Date().toISOString().split('T')[0];
     const dnNo = 'DN-' + Date.now().toString().slice(-6);
+    const hostedDebitIsDealer = (state.dealers || []).some(d => normalizeText(d.name) === normalizeText(party));
+    if (!_serverOnline) {
+      toast('Debit notes require a live hosted database connection. No local debit note was recorded.');
+      return;
+    }
+    const debitResponse = await fetch('/api/operations/ledger-entry', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entryType: 'debit-note', party, amount, date: todayStr, partyType: hostedDebitIsDealer ? 'Dealer' : 'Customer', ref: dnNo, reason: `Debit Note: ${data.reason}` })
+    });
+    if (!debitResponse.ok) {
+      const error = await debitResponse.json().catch(() => ({}));
+      toast(`Debit note rejected: ${error.error || debitResponse.status}`);
+      return;
+    }
+    await refreshHostedState();
+    closeModal();
+    toast(`Issued Debit Note ${dnNo} of ₹${amount.toLocaleString('en-IN')} for ${party}`);
+    return;
 
     const partyKey = normalizeText(party);
     let partyDebit = 0;
@@ -5277,6 +5299,24 @@ async function submitModal(e) {
 
     const partyKey = normalizeText(party);
     const isDealer = (state.dealers || []).some(d => normalizeText(d.name) === partyKey);
+
+    if (!_serverOnline) {
+      toast('Opening balances require a live hosted database connection. No local opening balance was recorded.');
+      return;
+    }
+    const openingResponse = await fetch('/api/operations/ledger-entry', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entryType: 'opening-balance', party, amount, date: todayStr, balanceType: data.balType, partyType: isDealer ? 'Dealer' : 'Customer', ref: 'OPENING-BAL', notes: `Opening Balance (${data.balType})` })
+    });
+    if (!openingResponse.ok) {
+      const error = await openingResponse.json().catch(() => ({}));
+      toast(`Opening balance rejected: ${error.error || openingResponse.status}`);
+      return;
+    }
+    await refreshHostedState();
+    closeModal();
+    toast(`Set Opening Balance of ₹${amount.toLocaleString('en-IN')} (${data.balType}) for ${party}`);
+    return;
 
     state.ledger.unshift({
       id: 'LEDG-OB-' + Date.now().toString().slice(-4),
@@ -6194,7 +6234,7 @@ function renderVehicleModels() {
         <td>${vm.motor || '1200W BLDC'}</td>
         <td>${vm.batterySpec || 'LFP 51.2V 100Ah'}</td>
         <td><span style="font-family:monospace;font-weight:700;">${vm.hsn || '87116010'}</span></td>
-        <td><strong>${vm.gstRate || 5}%</strong></td>
+        <td><strong>${vm.gstRate ?? getConfiguredGstRate('Vehicle')}%</strong></td>
         <td><strong style="color:#2f855a;">${formatINR(vm.price)}</strong></td>
         <td>
           <button class="secondary-btn btn-sell-vehicle-model-direct" data-idx="${idx}" style="padding:4px 8px;font-size:11px;background:#ebf8ff;color:#2b6cb0;font-weight:700;">↗ Sell Model</button>
@@ -6411,8 +6451,8 @@ function openVehicleModelModal() {
       <div class="field"><label style="font-weight:700;">Vehicle Category / Type *</label><select name="type"><option>Passenger 3W E-Rickshaw</option><option>Commercial 3W Cargo Loader</option><option>Heavy Duty 3W E-Loader</option><option>2W High-Speed EV Scooter</option></select></div>
       <div class="field"><label style="font-weight:700;">Motor Specifications</label><input name="motor" value="1200W BLDC Heavy Duty" /></div>
       <div class="field"><label style="font-weight:700;">Recommended Battery Pack</label><input name="batterySpec" value="LFP 51.2V 100Ah" /></div>
-      <div class="field"><label style="font-weight:700;">Vehicle HSN Code</label><input name="hsn" value="87116010" /></div>
-      <div class="field"><label style="font-weight:700;">GST Rate (%)</label><input name="gstRate" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="5" /></div>
+      <div class="field"><label style="font-weight:700;">Vehicle HSN Code</label><input name="hsn" value="${getSystemSettings().hsnVehicle || '87116010'}" /></div>
+      <div class="field"><label style="font-weight:700;">GST Rate (%)</label><input name="gstRate" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${getConfiguredGstRate('Vehicle')}" /></div>
       <div class="field full"><label style="font-weight:700;">Retail Ex-Showroom Price (₹) *</label><input name="price" type="number" min="0" step="0.01" inputmode="decimal" value="145000" style="font-weight:800;" required /></div>
     </div>
   `;
@@ -7039,7 +7079,12 @@ function bind() {
   });
 
   // Settings Save & Backup Handlers
-  $('#btn-save-all-settings')?.addEventListener('click', () => {
+  $('#btn-save-all-settings')?.addEventListener('click', async () => {
+    const newAdminPassword = String($('#set-admin-password')?.value || '').trim();
+    if (newAdminPassword && newAdminPassword.length < 10) {
+      toast('Administrator password must be at least 10 characters.');
+      return;
+    }
     const settings = {
       companyName: $('#set-company-name')?.value || 'HK MOTORS',
       tagline: $('#set-company-tagline')?.value || '',
@@ -7048,17 +7093,35 @@ function bind() {
       address: $('#set-company-address')?.value || '',
       phone: $('#set-company-phone')?.value || '',
       email: $('#set-company-email')?.value || '',
-      gstRate: Number($('#set-gst-rate-battery')?.value || 5),
-      gstRateBattery: Number($('#set-gst-rate-battery')?.value || 5),
-      gstRateCharger: Number($('#set-gst-rate-charger')?.value || 18),
-      gstRateAccessory: Number($('#set-gst-rate-accessory')?.value || 18),
-      gstRateService: Number($('#set-gst-rate-service')?.value || 18),
+      gstRate: Number($('#set-gst-rate-battery')?.value || getSystemSettings().gstRate),
+      gstRateBattery: Number($('#set-gst-rate-battery')?.value || getSystemSettings().gstRate),
+      gstRateVehicle: Number($('#set-gst-rate-vehicle')?.value || getSystemSettings().gstRateVehicle),
+      gstRateCharger: Number($('#set-gst-rate-charger')?.value || getSystemSettings().gstRateCharger),
+      gstRateAccessory: Number($('#set-gst-rate-accessory')?.value || getSystemSettings().gstRateAccessory),
+      gstRateService: Number($('#set-gst-rate-service')?.value || getSystemSettings().gstRateService),
       hsnBattery: $('#set-hsn-battery')?.value || '87116020',
+      hsnVehicle: $('#set-hsn-vehicle')?.value || '87116010',
       hsnCharger: $('#set-hsn-charger')?.value || '85044090',
     };
+    if (Object.values(settings).some(value => typeof value === 'number' && (!Number.isFinite(value) || value < 0 || value > 100))) {
+      toast('GST rates must be valid numbers between 0 and 100.');
+      return;
+    }
     localStorage.setItem('tejas_system_settings', JSON.stringify(settings));
-    fetch('/api/settings', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) })
-      .catch(error => console.warn('Failed to persist system settings:', error));
+    const settingsResponse = await fetch('/api/settings', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) });
+    if (!settingsResponse.ok) {
+      toast(`Settings were not saved on the hosted database (${settingsResponse.status}).`);
+      return;
+    }
+    if (newAdminPassword) {
+      const passwordResponse = await fetch('/api/auth/change-password', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: newAdminPassword }) });
+      if (!passwordResponse.ok) {
+        const error = await passwordResponse.json().catch(() => ({}));
+        toast(`Password was not changed: ${error.error || passwordResponse.status}`);
+        return;
+      }
+      $('#set-admin-password').value = '';
+    }
     toast('💾 Saved System Settings & Category Tax Rates successfully!');
   });
 

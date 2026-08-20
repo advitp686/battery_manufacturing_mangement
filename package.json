@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node server/server.js",
     "dev": "node server/server.js",
+    "test": "node server/tax.test.js",
     "serve-static": "npx -y serve web-preview -p 4173 -s",
     "backup": "node server/backup.js",
     "migrate:neon": "node server/migrate-sqlite-to-neon.js"

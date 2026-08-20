@@ -5,54 +5,29 @@ const { query, getAll, getById, insert, update, remove, withTransaction, getTota
 
 const asyncRoute = handler => (req, res) => Promise.resolve(handler(req, res)).catch(error => {
     console.error('API error:', error);
-    res.status(error.statusCode || 500).json({ error: error.message });
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: status >= 500 ? 'Internal server error' : error.message });
 });
 const badRequest = message => Object.assign(new Error(message), { statusCode: 400 });
+const { money, finiteNumber, calculateSaleTax, resolveTaxMode, DEFAULT_TAX_RATES } = require('./tax');
 
-const money = value => Math.round((Number(value) || 0) * 100) / 100;
+async function getSystemSettings(client) {
+    const rows = (await query('SELECT key, value FROM system_settings', [], client)).rows;
+    const settings = {};
+    for (const row of rows) {
+        try { settings[row.key] = JSON.parse(row.value); } catch { settings[row.key] = row.value; }
+    }
+    return settings;
+}
 
-function calculateSaleTax(items, invoice) {
-    const isIgst = String(invoice.taxMode || '').toUpperCase() === 'IGST';
-    const normalizedItems = items.map((item, index) => {
-        const qty = Number(item.qty ?? item.quantity ?? 1) || 1;
-        const price = Number(item.price ?? item.unitPrice ?? 0) || 0;
-        const taxableAmount = money(item.amount ?? item.taxableAmount ?? qty * price);
-        const gstRate = Number(item.gstRate ?? item.taxRate ?? 0) || 0;
-        const gstAmount = money(taxableAmount * gstRate / 100);
-        const cgstAmount = isIgst ? 0 : money(gstAmount / 2);
-        const sgstAmount = isIgst ? 0 : money(gstAmount - cgstAmount);
-        const igstAmount = isIgst ? gstAmount : 0;
-        const cessAmount = money(item.cessAmount ?? 0);
-        return {
-            ...item,
-            sr: item.sr ?? index + 1,
-            qty,
-            price,
-            amount: taxableAmount,
-            gstRate,
-            gstAmount,
-            cgstAmount,
-            sgstAmount,
-            igstAmount,
-            cessAmount
-        };
-    });
-    const taxableValue = money(normalizedItems.reduce((sum, item) => sum + item.amount, 0));
-    const totalGst = money(normalizedItems.reduce((sum, item) => sum + item.gstAmount, 0));
-    const cgstAmount = money(normalizedItems.reduce((sum, item) => sum + item.cgstAmount, 0));
-    const sgstAmount = money(normalizedItems.reduce((sum, item) => sum + item.sgstAmount, 0));
-    const igstAmount = money(normalizedItems.reduce((sum, item) => sum + item.igstAmount, 0));
-    const cessAmount = money(normalizedItems.reduce((sum, item) => sum + item.cessAmount, 0));
-    return {
-        items: normalizedItems,
-        taxableValue,
-        totalGst,
-        cgstAmount,
-        sgstAmount,
-        igstAmount,
-        cessAmount,
-        grandTotal: money(taxableValue + totalGst + cessAmount)
-    };
+async function partyBalance(party, client) {
+    const row = (await query('SELECT COALESCE(SUM(debit), 0) AS debit, COALESCE(SUM(credit), 0) AS credit FROM ledger WHERE party = $1', [party], client)).rows[0] || {};
+    return money(Number(row.debit || 0) - Number(row.credit || 0));
+}
+
+function assertPaymentAmount(total, paid) {
+    const amount = finiteNumber(paid ?? 0, 'Paid amount', { min: 0, max: total });
+    return money(amount);
 }
 
 async function embeddedModels(client) {
@@ -98,13 +73,17 @@ router.get('/api/invoices', asyncRoute(async (req, res) => res.json(await embedd
 router.post('/api/invoices', asyncRoute(async (req, res) => {
     const { items = [], ...invoice } = req.body || {};
     if (!invoice.invoice) throw badRequest('Invoice number is required');
-    const totals = calculateSaleTax(items, invoice);
+    const settings = await getSystemSettings();
+    const totals = calculateSaleTax(items, invoice, settings);
+    const paidAmount = assertPaymentAmount(totals.grandTotal, invoice.paidAmount);
     Object.assign(invoice, {
+        taxMode: totals.taxMode,
         taxableValue: totals.taxableValue, totalGst: totals.totalGst,
         cgstAmount: totals.cgstAmount, sgstAmount: totals.sgstAmount,
         igstAmount: totals.igstAmount, cessAmount: totals.cessAmount,
         grandTotal: totals.grandTotal,
-        balanceAmount: money(totals.grandTotal - Number(invoice.paidAmount || 0))
+        paidAmount,
+        balanceAmount: money(totals.grandTotal - paidAmount)
     });
     await withTransaction(async client => {
         await insert('invoices', invoice, client);
@@ -114,12 +93,15 @@ router.post('/api/invoices', asyncRoute(async (req, res) => {
 }));
 router.put('/api/invoices/:invoice', asyncRoute(async (req, res) => {
     const { items, ...invoice } = req.body || {};
-    const totals = items === undefined ? null : calculateSaleTax(items, invoice);
+    const settings = await getSystemSettings();
+    const totals = items === undefined ? null : calculateSaleTax(items, invoice, settings);
     if (totals) Object.assign(invoice, {
+        taxMode: totals.taxMode,
         taxableValue: totals.taxableValue, totalGst: totals.totalGst,
         cgstAmount: totals.cgstAmount, sgstAmount: totals.sgstAmount,
         igstAmount: totals.igstAmount, cessAmount: totals.cessAmount,
         grandTotal: totals.grandTotal,
+        paidAmount: assertPaymentAmount(totals.grandTotal, invoice.paidAmount),
         balanceAmount: money(totals.grandTotal - Number(invoice.paidAmount || 0))
     });
     await withTransaction(async client => {
@@ -224,15 +206,22 @@ router.post('/api/operations/production', asyncRoute(async (req, res) => {
     const result = await withTransaction(async client => {
         const model = (await query('SELECT * FROM models WHERE name = $1 LIMIT 1', [data.model], client)).rows[0];
         if (!model) throw operationError(`Battery model not found: ${data.model}`, 422);
-        const bom = (await query('SELECT * FROM model_bom WHERE model_code = $1', [model.code], client)).rows;
+        const bomRows = (await query('SELECT * FROM model_bom WHERE model_code = $1', [model.code], client)).rows;
+        const bomByMaterial = new Map();
+        for (const item of bomRows) {
+            const material = String(item.name || '').trim();
+            if (!material) throw operationError(`Model ${data.model} has a BOM item without a material name`, 422);
+            const qty = finiteNumber(item.qty, `BOM quantity for ${material}`, { min: 0.0001, max: 1000000 });
+            const current = bomByMaterial.get(material) || 0;
+            bomByMaterial.set(material, current + qty);
+        }
         const inventoryUpdates = [];
-        for (const item of bom) {
-            const required = Number(item.qty) || 1;
-            const inventories = (await query('SELECT * FROM inventory WHERE material = $1 ORDER BY batch FOR UPDATE', [item.name], client)).rows;
-            if (!inventories.length) throw operationError(`Required stock is missing: ${item.name}`, 422);
+        for (const [material, required] of bomByMaterial) {
+            const inventories = (await query('SELECT * FROM inventory WHERE material = $1 ORDER BY batch FOR UPDATE', [material], client)).rows;
+            if (!inventories.length) throw operationError(`Required stock is missing: ${material}`, 422);
             const parsedInventories = inventories.map(inventory => ({ inventory, parsed: parseAvailable(inventory.available) }));
             const totalAvailable = parsedInventories.reduce((sum, row) => sum + row.parsed.available, 0);
-            if (totalAvailable < required) throw operationError(`Insufficient stock for ${item.name}: required ${required}, available ${totalAvailable}`, 422);
+            if (totalAvailable < required) throw operationError(`Insufficient stock for ${material}: required ${required}, available ${totalAvailable}`, 422);
             let remainingRequired = required;
             for (const row of parsedInventories) {
                 if (remainingRequired <= 0) break;
@@ -241,9 +230,8 @@ router.post('/api/operations/production', asyncRoute(async (req, res) => {
                 remainingRequired -= consumed;
             }
         }
-        const id = data.id || `PR-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
-        const serial = data.serial && data.serial !== '—' ? data.serial : null;
-        await insert('production', { id, model: data.model, operator: data.operator, built: data.built || new Date().toISOString().slice(0, 10), qc: data.qc || 'Awaiting', serial, status: data.status || 'In QC' }, client);
+        const id = `PR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+        await insert('production', { id, model: data.model, operator: data.operator, built: data.built || new Date().toISOString().slice(0, 10), qc: 'Awaiting', serial: null, status: 'In QC' }, client);
         for (const updateRow of inventoryUpdates) {
             const health = updateRow.remaining / (updateRow.total || 1) < 0.25 ? 'Low' : 'Good';
             await query('UPDATE inventory SET available = $1, health = $2 WHERE batch = $3', [formatAvailable(updateRow.remaining, updateRow.total), health, updateRow.inventory.batch], client);
@@ -258,9 +246,13 @@ router.post('/api/operations/sale', asyncRoute(async (req, res) => {
     const invoice = payload.invoice || {};
     const items = Array.isArray(invoice.items) ? invoice.items : [];
     if (!invoice.invoice || !invoice.party || !items.length) throw badRequest('Invoice, party, and at least one item are required');
-    const totals = calculateSaleTax(items, invoice);
+    if (!['Retail', 'Dealer'].includes(invoice.type)) throw badRequest('Sale type must be Retail or Dealer');
+    const settings = await getSystemSettings();
+    const totals = calculateSaleTax(items, invoice, settings);
+    const paidAmount = assertPaymentAmount(totals.grandTotal, invoice.paidAmount);
     const calculatedInvoice = {
         ...invoice,
+        taxMode: totals.taxMode,
         taxableValue: totals.taxableValue,
         totalGst: totals.totalGst,
         cgstAmount: totals.cgstAmount,
@@ -268,7 +260,8 @@ router.post('/api/operations/sale', asyncRoute(async (req, res) => {
         igstAmount: totals.igstAmount,
         cessAmount: totals.cessAmount,
         grandTotal: totals.grandTotal,
-        balanceAmount: money(totals.grandTotal - Number(invoice.paidAmount || 0))
+        paidAmount,
+        balanceAmount: money(totals.grandTotal - paidAmount)
     };
     const serials = items.map(item => item.packSerial).filter(Boolean);
     if (new Set(serials).size !== serials.length) throw operationError('A battery serial cannot appear twice on one invoice', 422);
@@ -279,7 +272,7 @@ router.post('/api/operations/sale', asyncRoute(async (req, res) => {
             const production = (await query('SELECT * FROM production WHERE serial = $1 FOR UPDATE', [serial], client)).rows[0];
             if (!production) throw operationError(`Battery serial not found: ${serial}`, 422);
             if (['Sold (Retail)', 'Dispatched (Dealer)'].includes(production.status)) throw operationError(`Battery ${serial} has already been sold`, 409);
-            const existingSale = (await query('SELECT 1 FROM sales WHERE pack = $1 LIMIT 1', [serial], client)).rows[0];
+            const existingSale = (await query("SELECT 1 FROM sales WHERE pack = $1 AND COALESCE(status, 'Active') <> 'Cancelled' LIMIT 1", [serial], client)).rows[0];
             if (existingSale) throw operationError(`Battery ${serial} already has a dispatch record`, 409);
         }
         for (const chassisNo of chassisNumbers) {
@@ -300,7 +293,7 @@ router.post('/api/operations/sale', asyncRoute(async (req, res) => {
                 invoiceNo: calculatedInvoice.invoice
             }, client);
             if (item.packSerial) {
-                await insert('sales', { invoice: calculatedInvoice.invoice, pack: item.packSerial, party: calculatedInvoice.party, type: calculatedInvoice.type, date: calculatedInvoice.date, warranty: calculatedInvoice.warrantyStatus, amount: item.amount, desc: item.desc || item.description }, client);
+                await insert('sales', { invoice: calculatedInvoice.invoice, pack: item.packSerial, party: calculatedInvoice.party, type: calculatedInvoice.type, date: calculatedInvoice.date, warranty: calculatedInvoice.warrantyStatus, amount: item.amount, desc: item.desc || item.description, status: 'Active' }, client);
                 await query('UPDATE production SET status = $1 WHERE serial = $2', [calculatedInvoice.type === 'Retail' ? 'Sold (Retail)' : 'Dispatched (Dealer)', item.packSerial], client);
                 const productionModel = (await query('SELECT model FROM production WHERE serial = $1 LIMIT 1', [item.packSerial], client)).rows[0];
                 const model = productionModel ? (await query('SELECT warranty_months, warranty_activation_rule FROM models WHERE name = $1 LIMIT 1', [productionModel.model], client)).rows[0] : null;
@@ -325,20 +318,11 @@ router.post('/api/operations/sale', asyncRoute(async (req, res) => {
 
 router.post('/api/operations/vehicle-sale', asyncRoute(async (req, res) => {
     const invoice = req.body || {};
-    const grandTotal = Number(invoice.grandTotal);
-    const gstRate = Number(invoice.gstRate || 0);
-    const taxableValue = money(grandTotal / (1 + gstRate / 100));
-    const totalGst = money(grandTotal - taxableValue);
-    const cgstAmount = String(invoice.taxMode || '').toUpperCase() === 'IGST' ? 0 : money(totalGst / 2);
-    const sgstAmount = String(invoice.taxMode || '').toUpperCase() === 'IGST' ? 0 : money(totalGst - cgstAmount);
-    const igstAmount = String(invoice.taxMode || '').toUpperCase() === 'IGST' ? totalGst : 0;
-    const paidAmount = Number(invoice.paidAmount || 0);
+    const grandTotal = finiteNumber(invoice.grandTotal, 'Vehicle invoice total', { min: 0.01, max: 1000000000 });
     if (!invoice.invoice || !invoice.party || !invoice.chassisNo || !Number.isFinite(grandTotal) || grandTotal <= 0) {
         throw badRequest('Vehicle invoice, party, chassis number, and a positive total are required');
     }
-    if (!Number.isFinite(paidAmount) || paidAmount < 0 || paidAmount > grandTotal) {
-        throw badRequest('Vehicle payment must be between zero and the invoice total');
-    }
+    if (!['Retail', 'Dealer'].includes(invoice.type)) throw badRequest('Vehicle sale type must be Retail or Dealer');
     await withTransaction(async client => {
         const vehicle = (await query('SELECT * FROM vehicles WHERE chassis_no = $1 FOR UPDATE', [invoice.chassisNo], client)).rows[0];
         if (!vehicle) throw operationError(`Vehicle not found: ${invoice.chassisNo}`, 422);
@@ -346,8 +330,21 @@ router.post('/api/operations/vehicle-sale', asyncRoute(async (req, res) => {
         const duplicate = (await query('SELECT 1 FROM vehicle_invoices WHERE invoice = $1', [invoice.invoice], client)).rows[0];
         if (duplicate) throw operationError(`Vehicle invoice already exists: ${invoice.invoice}`, 409);
 
-        await insert('vehicle_invoices', { ...invoice, gstRate, taxableValue, totalGst, cgstAmount, sgstAmount, igstAmount, grandTotal, paidAmount, balanceAmount: grandTotal - paidAmount }, client);
+        const settings = await getSystemSettings(client);
+        const vehicleModel = (await query('SELECT * FROM vehicle_models WHERE id = $1 OR name = $2 LIMIT 1', [vehicle.modelNo || invoice.model, vehicle.model || invoice.model], client)).rows[0];
+        const gstRate = finiteNumber(vehicleModel?.gst_rate ?? settings.gstRateVehicle ?? settings.gstRate ?? DEFAULT_TAX_RATES.vehicle, 'Vehicle GST rate', { min: 0, max: 100 });
+        const taxMode = resolveTaxMode(invoice, settings);
+        const taxableValue = money(grandTotal / (1 + gstRate / 100));
+        const totalGst = money(grandTotal - taxableValue);
+        const cgstAmount = taxMode === 'IGST' ? 0 : money(totalGst / 2);
+        const sgstAmount = taxMode === 'IGST' ? 0 : money(totalGst - cgstAmount);
+        const igstAmount = taxMode === 'IGST' ? totalGst : 0;
+        const paidAmount = assertPaymentAmount(grandTotal, invoice.paidAmount);
+        const balanceAmount = money(grandTotal - paidAmount);
+        const { items: ignoredItems, ...invoiceRow } = invoice;
+        await insert('vehicle_invoices', { ...invoiceRow, taxMode, gstRate, taxableValue, totalGst, cgstAmount, sgstAmount, igstAmount, grandTotal, paidAmount, balanceAmount }, client);
         await query("UPDATE vehicles SET status = 'Sold & Dispatched' WHERE chassis_no = $1", [invoice.chassisNo], client);
+        const currentBalance = await partyBalance(invoice.party, client);
         await insert('ledger', {
             id: `LEDG-${crypto.randomUUID()}`,
             date: invoice.date,
@@ -357,7 +354,7 @@ router.post('/api/operations/vehicle-sale', asyncRoute(async (req, res) => {
             desc: `EV Vehicle Tax Invoice ${invoice.invoice} (${invoice.model} · Chassis ${invoice.chassisNo})`,
             debit: grandTotal,
             credit: 0,
-            balance: grandTotal,
+            balance: money(currentBalance + grandTotal),
             bankAccount: invoice.bankAccount
         }, client);
         if (paidAmount > 0) await insert('ledger', {
@@ -369,11 +366,122 @@ router.post('/api/operations/vehicle-sale', asyncRoute(async (req, res) => {
             desc: `Vehicle Payment Received via ${invoice.bankAccount || 'Bank Account'}`,
             debit: 0,
             credit: paidAmount,
-            balance: grandTotal - paidAmount,
+            balance: money(currentBalance + grandTotal - paidAmount),
             bankAccount: invoice.bankAccount
         }, client);
     });
     res.status(201).json({ success: true, invoice: invoice.invoice, chassisNo: invoice.chassisNo });
+}));
+
+router.post('/api/operations/payment', asyncRoute(async (req, res) => {
+    const data = req.body || {};
+    const party = String(data.party || '').trim();
+    const amount = finiteNumber(data.amount, 'Payment amount', { min: 0.01, max: 1000000000 });
+    if (!party) throw badRequest('Party is required for a payment');
+    const date = data.date || new Date().toISOString().slice(0, 10);
+    const bankAccount = String(data.bankAccount || 'Unspecified payment mode').trim().slice(0, 200);
+    const result = await withTransaction(async client => {
+        const invoiceRows = (await query('SELECT invoice, party, date, grand_total, paid_amount, balance_amount FROM invoices WHERE LOWER(party) = LOWER($1) FOR UPDATE', [party], client)).rows.map(row => ({ ...row, table: 'invoices' }));
+        const vehicleRows = (await query('SELECT invoice, party, date, grand_total, paid_amount, balance_amount FROM vehicle_invoices WHERE LOWER(party) = LOWER($1) FOR UPDATE', [party], client)).rows.map(row => ({ ...row, table: 'vehicle_invoices' }));
+        const openInvoices = [...invoiceRows, ...vehicleRows].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || String(a.invoice).localeCompare(String(b.invoice)));
+        let remaining = money(amount);
+        const allocations = [];
+        for (const invoice of openInvoices) {
+            if (remaining <= 0) break;
+            const grandTotal = money(invoice.grand_total);
+            const paidAmount = money(invoice.paid_amount);
+            const outstanding = money(grandTotal - paidAmount);
+            if (outstanding <= 0) continue;
+            const applied = money(Math.min(remaining, outstanding));
+            const nextPaid = money(paidAmount + applied);
+            const nextBalance = money(grandTotal - nextPaid);
+            await query(`UPDATE ${invoice.table} SET paid_amount = $1, balance_amount = $2 WHERE invoice = $3`, [nextPaid, nextBalance, invoice.invoice], client);
+            allocations.push({ invoice: invoice.invoice, amount: applied, balanceAmount: nextBalance });
+            remaining = money(remaining - applied);
+        }
+        const currentBalance = await partyBalance(party, client);
+        const receiptNo = String(data.ref || `PAY-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`).slice(0, 100);
+        await insert('ledger', {
+            id: `LEDG-${crypto.randomUUID()}`, date, party, partyType: data.partyType || 'Customer', ref: receiptNo,
+            desc: data.notes || `Payment Received via ${bankAccount}`, debit: 0, credit: amount,
+            balance: money(currentBalance - amount), bankAccount
+        }, client);
+        return { receiptNo, allocations, unappliedAmount: remaining };
+    });
+    res.status(201).json({ success: true, party, amount: money(amount), ...result });
+}));
+
+router.post('/api/operations/ledger-entry', asyncRoute(async (req, res) => {
+    const data = req.body || {};
+    const party = String(data.party || '').trim();
+    const entryType = String(data.entryType || '').trim().toLowerCase();
+    const amount = finiteNumber(data.amount, 'Ledger amount', { min: 0.01, max: 1000000000 });
+    if (!party || !['credit-note', 'debit-note', 'opening-balance'].includes(entryType)) throw badRequest('Party and a supported ledger entry type are required');
+    const date = data.date || new Date().toISOString().slice(0, 10);
+    const isCredit = entryType === 'credit-note' || (entryType === 'opening-balance' && data.balanceType === 'Credit');
+    const debit = isCredit ? 0 : amount;
+    const credit = isCredit ? amount : 0;
+    const result = await withTransaction(async client => {
+        if (entryType === 'credit-note' && data.invoice) {
+            const genericInvoice = (await query('SELECT party, balance_amount FROM invoices WHERE invoice = $1 FOR UPDATE', [data.invoice], client)).rows[0];
+            const vehicleInvoice = genericInvoice ? null : (await query('SELECT party, balance_amount FROM vehicle_invoices WHERE invoice = $1 FOR UPDATE', [data.invoice], client)).rows[0];
+            const linkedInvoice = genericInvoice || vehicleInvoice;
+            if (!linkedInvoice) throw operationError(`Invoice not found: ${data.invoice}`, 404);
+            if (String(linkedInvoice.party || '').toLowerCase() !== party.toLowerCase()) throw operationError('Credit note party does not match the invoice party', 422);
+            const table = genericInvoice ? 'invoices' : 'vehicle_invoices';
+            await query(`UPDATE ${table} SET balance_amount = COALESCE(balance_amount, 0) - $1 WHERE invoice = $2`, [amount, data.invoice], client);
+        }
+        const currentBalance = await partyBalance(party, client);
+        const ref = String(data.ref || `${entryType === 'credit-note' ? 'CN' : entryType === 'debit-note' ? 'DN' : 'OB'}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`).slice(0, 100);
+        await insert('ledger', { id: `LEDG-${crypto.randomUUID()}`, date, party, partyType: data.partyType || 'Customer', ref, desc: String(data.notes || data.reason || `${entryType} for ${party}`).slice(0, 500), debit, credit, balance: money(currentBalance + debit - credit), bankAccount: data.bankAccount || entryType }, client);
+        return { ref, balance: money(currentBalance + debit - credit) };
+    });
+    res.status(201).json({ success: true, party, amount: money(amount), ...result });
+}));
+
+router.post('/api/operations/sale/:invoice/cancel', asyncRoute(async (req, res) => {
+    if (req.session.user?.role !== 'Admin') throw operationError('Administrator role required to cancel an invoice', 403);
+    const invoiceNo = req.params.invoice;
+    const reason = String(req.body?.reason || 'User requested cancellation').trim().slice(0, 500);
+    const result = await withTransaction(async client => {
+        const invoice = (await query('SELECT * FROM invoices WHERE invoice = $1 FOR UPDATE', [invoiceNo], client)).rows[0];
+        if (!invoice) throw operationError(`Invoice not found: ${invoiceNo}`, 404);
+        if (invoice.warranty_status === 'Cancelled') throw operationError(`Invoice ${invoiceNo} is already cancelled`, 409);
+        const items = (await query('SELECT * FROM invoice_items WHERE invoice_no = $1', [invoiceNo], client)).rows;
+        for (const item of items) {
+            if (item.pack_serial) {
+                const production = (await query('SELECT status FROM production WHERE serial = $1 FOR UPDATE', [item.pack_serial], client)).rows[0];
+                if (production && ['Sold (Retail)', 'Dispatched (Dealer)'].includes(production.status)) await query("UPDATE production SET status = 'Saleable' WHERE serial = $1", [item.pack_serial], client);
+                await query("UPDATE warranties SET status = 'Cancelled' WHERE pack = $1 AND status <> 'Replaced'", [item.pack_serial], client);
+            }
+            if (item.chassis_vin) {
+                await query("UPDATE vehicles SET status = 'Available in Showroom' WHERE chassis_no = $1 AND status IN ('Sold (Retail)', 'Dispatched (Dealer)', 'Sold & Dispatched')", [item.chassis_vin], client);
+            }
+        }
+        await query("UPDATE sales SET status = 'Cancelled', cancel_reason = $1, cancelled_at = $2 WHERE invoice = $3", [reason, new Date().toISOString(), invoiceNo], client);
+        const currentBalance = await partyBalance(invoice.party, client);
+        await insert('ledger', { id: `LEDG-${crypto.randomUUID()}`, date: new Date().toISOString().slice(0, 10), party: invoice.party, partyType: invoice.type, ref: `CN-${invoiceNo}`, desc: `Sale Cancellation (${invoiceNo}) — ${reason}`, debit: 0, credit: money(invoice.grand_total), balance: money(currentBalance - Number(invoice.grand_total || 0)), bankAccount: 'Sale Cancellation Reversal' }, client);
+        await query("UPDATE invoices SET warranty_status = 'Cancelled', balance_amount = $1 WHERE invoice = $2", [money(-Number(invoice.paid_amount || 0)), invoiceNo], client);
+        return { invoice: invoiceNo, refundDue: money(invoice.paid_amount || 0) };
+    });
+    res.json({ success: true, ...result });
+}));
+
+router.post('/api/operations/vehicle-sale/:invoice/cancel', asyncRoute(async (req, res) => {
+    if (req.session.user?.role !== 'Admin') throw operationError('Administrator role required to cancel an invoice', 403);
+    const invoiceNo = req.params.invoice;
+    const reason = String(req.body?.reason || 'User requested cancellation').trim().slice(0, 500);
+    const result = await withTransaction(async client => {
+        const invoice = (await query('SELECT * FROM vehicle_invoices WHERE invoice = $1 FOR UPDATE', [invoiceNo], client)).rows[0];
+        if (!invoice) throw operationError(`Vehicle invoice not found: ${invoiceNo}`, 404);
+        if (invoice.status === 'Cancelled') throw operationError(`Vehicle invoice ${invoiceNo} is already cancelled`, 409);
+        if (invoice.chassis_no) await query("UPDATE vehicles SET status = 'Available in Showroom' WHERE chassis_no = $1 AND status IN ('Sold & Dispatched', 'Sold (Retail)', 'Dispatched (Dealer)')", [invoice.chassis_no], client);
+        const currentBalance = await partyBalance(invoice.party, client);
+        await insert('ledger', { id: `LEDG-${crypto.randomUUID()}`, date: new Date().toISOString().slice(0, 10), party: invoice.party, partyType: invoice.type, ref: `CN-${invoiceNo}`, desc: `Vehicle Sale Cancellation (${invoiceNo}) — ${reason}`, debit: 0, credit: money(invoice.grand_total), balance: money(currentBalance - Number(invoice.grand_total || 0)), bankAccount: 'Sale Cancellation Reversal' }, client);
+        await query("UPDATE vehicle_invoices SET status = 'Cancelled', balance_amount = $1 WHERE invoice = $2", [money(-Number(invoice.paid_amount || 0)), invoiceNo], client);
+        return { invoice: invoiceNo, refundDue: money(invoice.paid_amount || 0) };
+    });
+    res.json({ success: true, ...result });
 }));
 
 router.post('/api/operations/qc', asyncRoute(async (req, res) => {
@@ -395,9 +503,14 @@ router.post('/api/operations/qc', asyncRoute(async (req, res) => {
 router.post('/api/operations/warranty', asyncRoute(async (req, res) => {
     const { pack, customer, registered, end, status = 'Active', allowCustom = false } = req.body || {};
     if (!pack || !customer) throw badRequest('Pack serial and customer are required');
+    const registeredDate = new Date(`${registered || ''}T00:00:00`);
+    const endDate = new Date(`${end || ''}T00:00:00`);
+    if (Number.isNaN(registeredDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate < registeredDate) throw badRequest('Warranty dates are invalid or the end date is before registration');
+    if (!['Active', 'Active (Same Day Auto)', 'Dealer Auto (+1 Month)', 'Cancelled', 'Replaced'].includes(status)) throw badRequest('Unsupported warranty status');
     await withTransaction(async client => {
         const production = (await query('SELECT status FROM production WHERE serial = $1 FOR UPDATE', [pack], client)).rows[0];
-        if (!production && !allowCustom) throw operationError(`Cannot activate warranty for unknown pack: ${pack}`, 422);
+        const customAllowed = Boolean(allowCustom) && req.session.user?.role === 'Admin';
+        if (!production && !customAllowed) throw operationError(`Cannot activate warranty for unknown pack: ${pack}`, 422);
         if (production && ['QC failed', 'In QC'].includes(production.status)) throw operationError(`Pack ${pack} is not released for warranty`, 422);
         await query('INSERT INTO warranties(pack,customer,registered,"end",status) VALUES($1,$2,$3,$4,$5) ON CONFLICT(pack) DO UPDATE SET customer=EXCLUDED.customer,registered=EXCLUDED.registered,"end"=EXCLUDED."end",status=EXCLUDED.status', [pack, customer, registered, end, status], client);
     });
@@ -413,6 +526,8 @@ router.post('/api/operations/claim', asyncRoute(async (req, res) => {
         await withTransaction(async client => {
             const warranty = (await query('SELECT pack FROM warranties WHERE pack = $1', [data.pack], client)).rows[0];
             if (!warranty) throw operationError(`No warranty exists for pack ${data.pack}`, 422);
+            const duplicate = (await query('SELECT claim FROM claims WHERE claim = $1', [claim], client)).rows[0];
+            if (duplicate) throw operationError(`Claim already exists: ${claim}`, 409);
             await insert('claims', { claim, pack: data.pack, customer: data.customer || 'Unregistered', issue: data.issue, opened: data.opened || new Date().toISOString().slice(0, 10), outcome: data.outcome || 'Inspection', status: 'Open', notes: data.notes || '' }, client);
         });
         return res.status(201).json({ success: true, claim });
@@ -436,7 +551,13 @@ router.post('/api/operations/claim', asyncRoute(async (req, res) => {
     }
     if (action === 'update') {
         if (!data.claim) throw badRequest('Claim is required');
-        await query('UPDATE claims SET status=$1,outcome=$2,issue=$3,notes=$4,replaced_comp=$5,repair_labor=$6,repair_elec=$7 WHERE claim=$8', [data.status, data.outcome, data.issue, data.notes || '', data.replacedComp || 'None', data.repairLabor || 0, data.repairElec || 0, data.claim]);
+        const allowedStatuses = ['Open', 'In Repair', 'Resolved', 'Rejected'];
+        if (!allowedStatuses.includes(data.status)) throw badRequest('Unsupported claim status');
+        await withTransaction(async client => {
+            const existing = (await query('SELECT claim FROM claims WHERE claim = $1 FOR UPDATE', [data.claim], client)).rows[0];
+            if (!existing) throw operationError(`Claim not found: ${data.claim}`, 404);
+            await query('UPDATE claims SET status=$1,outcome=$2,issue=$3,notes=$4,replaced_comp=$5,repair_labor=$6,repair_elec=$7 WHERE claim=$8', [data.status, data.outcome || 'Inspection', data.issue || '', data.notes || '', data.replacedComp || 'None', finiteNumber(data.repairLabor || 0, 'Repair labour', { min: 0 }), finiteNumber(data.repairElec || 0, 'Repair electricity', { min: 0 }), data.claim], [], client);
+        });
         return res.json({ success: true, claim: data.claim });
     }
     if (action === 'repair') {
@@ -447,11 +568,31 @@ router.post('/api/operations/claim', asyncRoute(async (req, res) => {
             if (!existing) throw operationError(`Claim not found: ${claim}`, 404);
             const duplicate = (await query('SELECT invoice FROM invoices WHERE invoice = $1', [invoice.invoice], client)).rows[0];
             if (duplicate) throw operationError(`Repair invoice already exists: ${invoice.invoice}`, 409);
-            const { items: ignoredItems, ...invoiceRow } = invoice;
+            const settings = await getSystemSettings(client);
+            const invoiceParty = party || existing.customer || 'Repair Customer';
+            const invoiceInput = { ...invoice, party: invoiceParty, taxMode: invoice.taxMode || 'INTRA' };
+            const totals = calculateSaleTax(items, invoiceInput, settings);
+            const paidAmount = assertPaymentAmount(totals.grandTotal, invoice.paidAmount);
+            const calculatedInvoice = {
+                ...invoiceInput,
+                taxMode: totals.taxMode,
+                taxableValue: totals.taxableValue,
+                totalGst: totals.totalGst,
+                cgstAmount: totals.cgstAmount,
+                sgstAmount: totals.sgstAmount,
+                igstAmount: totals.igstAmount,
+                cessAmount: totals.cessAmount,
+                grandTotal: totals.grandTotal,
+                paidAmount,
+                balanceAmount: money(totals.grandTotal - paidAmount)
+            };
+            const { items: ignoredItems, ...invoiceRow } = calculatedInvoice;
             await insert('invoices', invoiceRow, client);
-            for (const item of items) await insert('invoice_items', { sr: item.sr, desc: item.desc, packSerial: item.packSerial, hsn: item.hsn, qty: item.qty, price: item.price, amount: item.amount, invoiceNo: invoice.invoice }, client);
-            await insert('ledger', { id: `LEDG-${crypto.randomUUID()}`, date: invoice.date, party: party || existing.customer, partyType: 'Customer', ref: invoice.invoice, desc: `Repair Invoice ${invoice.invoice}`, debit: invoice.grandTotal, credit: 0, balance: invoice.balanceAmount ?? invoice.grandTotal }, client);
-            await query('UPDATE claims SET status=$1,outcome=$2,repair_invoice_no=$3,repair_labor=$4,repair_elec=$5,replaced_comp=$6,notes=$7 WHERE claim=$8', [status, outcome, invoice.invoice, data.repairLabor || 0, data.repairElec || 0, data.replacedComp || 'None', data.notes || '', claim], client);
+            for (const item of totals.items) await insert('invoice_items', { sr: item.sr, desc: item.desc || item.description, packSerial: item.packSerial || item.serial, hsn: item.hsn, qty: item.qty, price: item.price, amount: item.amount, gstRate: item.gstRate, gstAmount: item.gstAmount, cgstAmount: item.cgstAmount, sgstAmount: item.sgstAmount, igstAmount: item.igstAmount, cessAmount: item.cessAmount, invoiceNo: calculatedInvoice.invoice }, client);
+            const currentBalance = await partyBalance(invoiceParty, client);
+            await insert('ledger', { id: `LEDG-${crypto.randomUUID()}`, date: calculatedInvoice.date, party: invoiceParty, partyType: 'Customer', ref: calculatedInvoice.invoice, desc: `Repair Invoice ${calculatedInvoice.invoice}`, debit: calculatedInvoice.grandTotal, credit: 0, balance: money(currentBalance + calculatedInvoice.grandTotal) }, client);
+            if (paidAmount > 0) await insert('ledger', { id: `LEDG-${crypto.randomUUID()}`, date: calculatedInvoice.date, party: invoiceParty, partyType: 'Customer', ref: `PAY-${calculatedInvoice.invoice}`, desc: `Repair Payment Received`, debit: 0, credit: paidAmount, balance: money(currentBalance + calculatedInvoice.grandTotal - paidAmount), bankAccount: calculatedInvoice.bankAccount }, client);
+            await query('UPDATE claims SET status=$1,outcome=$2,repair_invoice_no=$3,repair_labor=$4,repair_elec=$5,replaced_comp=$6,notes=$7 WHERE claim=$8', [status, outcome, calculatedInvoice.invoice, finiteNumber(data.repairLabor || 0, 'Repair labour', { min: 0 }), finiteNumber(data.repairElec || 0, 'Repair electricity', { min: 0 }), data.replacedComp || 'None', data.notes || '', claim], [], client);
         });
         return res.status(201).json({ success: true, claim, invoice: invoice.invoice });
     }
@@ -465,6 +606,9 @@ router.get('/api/settings', asyncRoute(async (req, res) => {
 }));
 router.put('/api/settings', asyncRoute(async (req, res) => {
     if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) throw badRequest('Settings must be an object');
+    for (const key of ['gstRate', 'gstRateBattery', 'gstRateVehicle', 'gstRateCharger', 'gstRateAccessory', 'gstRateService']) {
+        if (req.body[key] !== undefined) finiteNumber(req.body[key], key, { min: 0, max: 100 });
+    }
     await withTransaction(async client => { for (const [key, value] of Object.entries(req.body)) await query('INSERT INTO system_settings (key,value) VALUES ($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value', [key, typeof value === 'object' ? JSON.stringify(value) : String(value)], client); });
     res.json(req.body);
 }));
