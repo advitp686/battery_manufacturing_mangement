@@ -687,6 +687,7 @@
 
           <div class="tab-row" style="margin-bottom:16px;">
             <button class="tab active" data-tab="supplier-ledger-statement-tab">🧾 Supplier Statement of Account</button>
+            <button class="tab" data-tab="purchase-bill-history-tab">📚 Purchase Bill History (<span id="purchase-bill-count-badge">0</span>)</button>
             <button class="tab" data-tab="supplier-master-tab">🏢 Supplier Accounts Master (<span id="supp-count-badge">0</span>)</button>
           </div>
 
@@ -756,7 +757,39 @@
             </div>
           </div>
 
-          <!-- Supplier Tab 2: Supplier Master -->
+          <!-- Supplier Tab 2: Purchase Bill History -->
+          <div class="tab-content" id="purchase-bill-history-tab">
+            <article class="panel table-panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>Purchase Bill History</h2>
+                  <p>Complete purchase invoices recorded against suppliers, with GST, payments, balances, and print access.</p>
+                </div>
+                <button class="primary-btn" data-modal="purchase-bill-modal" style="font-size:12px;padding:6px 12px;background:#319795;">＋ Enter Purchase Bill</button>
+              </div>
+              <div class="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Bill No</th>
+                      <th>Date</th>
+                      <th>Supplier</th>
+                      <th>GST Mode</th>
+                      <th>Taxable Value</th>
+                      <th>Total GST</th>
+                      <th>Grand Total</th>
+                      <th>Paid</th>
+                      <th>Balance</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="purchase-bill-history-table"></tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+
+          <!-- Supplier Tab 3: Supplier Master -->
           <div class="tab-content" id="supplier-master-tab">
             <article class="panel table-panel">
               <div class="panel-heading">
@@ -1194,6 +1227,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <div class="modal-backdrop" id="modal-backdrop" hidden><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-header"><h2 id="modal-title">New record</h2><button class="ghost-icon" id="modal-close" aria-label="Close">×</button></div><form id="modal-form"><div id="modal-fields"></div><div class="modal-footer"><button type="button" class="secondary-btn" id="modal-cancel">Cancel</button><button type="submit" class="primary-btn">Save record</button></div></form></div></div>
   <script src="qrcode.min.js"></script>
-<script src="app.js?v=20260820-purchase-credit-invoice"></script>
+<script src="app.js?v=20260820-purchase-history-tab"></script>
 </body>
 </html>

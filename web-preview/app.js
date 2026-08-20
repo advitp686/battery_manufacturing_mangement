@@ -1986,6 +1986,7 @@ function showView(view) {
   if (view === 'purchase-ledger') {
     renderSuppliers();
     renderSupplierStatement();
+    renderPurchaseBillHistory();
   }
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -4230,7 +4231,7 @@ async function submitModal(e) {
     if(!items.length||!data.supplier||!data.billNo){toast('Add a vendor, bill number, and at least one priced item or vehicle.');return;}
     const taxableValue=items.reduce((s,x)=>s+x.taxableValue,0),cgstAmount=items.reduce((s,x)=>s+x.cgstAmount,0),sgstAmount=items.reduce((s,x)=>s+x.sgstAmount,0),igstAmount=items.reduce((s,x)=>s+x.igstAmount,0),otherAmount=items.reduce((s,x)=>s+x.otherAmount,0),vehicleOtherCharges=data.purchase_type==='vehicle'?vehiclePurchases.reduce((s,v)=>s+v.otherCharges,0):0,grandTotal=taxableValue+cgstAmount+sgstAmount+igstAmount+otherAmount,date=data.billDate||new Date().toISOString().slice(0,10),paidAmount=Math.max(0,Math.min(grandTotal,Number(data.payment_status==='Paid'?grandTotal:data.payment_amount||0))),paymentPercent=grandTotal?paidAmount/grandTotal*100:0,balanceAmount=grandTotal-paidAmount,paymentMode=data.payment_mode||'HDFC Bank Current A/C (50200012345678)',billId='PB-'+Date.now();
     if(data.purchase_type==='vehicle' && !vehiclePurchases.length){toast('Vehicle purchase requires a model number, chassis number, motor number, and a price for at least one vehicle.');return;}
-    if(!state.purchaseBills)state.purchaseBills=[]; state.purchaseBills.unshift({id:billId,billNo:data.billNo,billDate:date,ewayBillNo:data.ewayBillNo||'',supplier:data.supplier,vendorGstin,taxMode,cgstAmount,sgstAmount,igstAmount,otherAmount,vehicleOtherCharges,grandTotal,paymentStatus:data.payment_status||'Unpaid',paymentPercent,paidAmount,balanceAmount,paymentMode,items});
+    if(!state.purchaseBills)state.purchaseBills=[]; state.purchaseBills.unshift({id:billId,billNo:data.billNo,billDate:date,ewayBillNo:data.ewayBillNo||'',supplier:data.supplier,vendorGstin,taxMode,taxableValue,cgstAmount,sgstAmount,igstAmount,otherAmount,vehicleOtherCharges,grandTotal,paymentStatus:data.payment_status||'Unpaid',paymentPercent,paidAmount,balanceAmount,paymentMode,items});
     if(!state.suppliers) state.suppliers=[];
     if(!state.suppliers.some(s=>normalizeText(s.name)===normalizeText(data.supplier))) state.suppliers.unshift({id:`SUPP-${Date.now()}`,name:data.supplier,gstin:vendorGstin,contactPerson:'',phone:'',address:'',state:'',category:'Supplier'});
     if(data.purchase_type!=='vehicle') items.forEach((x,i)=>state.inventory.unshift({batch:`${data.billNo}-${i+1}`,material:x.name,category:x.category,supplier:data.supplier,received:date,available:`${x.qty} / ${x.qty}`,location:data.location||'Main workshop',health:'Good',unitPrice:x.unitPrice,hsn:x.hsn,gstRate:x.sgstRate+x.igstRate+x.otherRate,billNo:data.billNo,ewayBillNo:data.ewayBillNo||''}));
@@ -5816,6 +5817,30 @@ function renderSupplierStatement() {
   if ($('#supplier-statement-table')) {
     $('#supplier-statement-table').innerHTML = rows || `<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:18px;">No purchase ledger transactions found for ${selectedSuppName || 'this supplier'}.</td></tr>`;
   }
+}
+
+function renderPurchaseBillHistory() {
+  const bills = [...(state.purchaseBills || [])].sort((a, b) => String(b.billDate || '').localeCompare(String(a.billDate || '')) || String(b.billNo || '').localeCompare(String(a.billNo || '')));
+  if ($('#purchase-bill-count-badge')) $('#purchase-bill-count-badge').textContent = bills.length;
+  if (!$('#purchase-bill-history-table')) return;
+  $('#purchase-bill-history-table').innerHTML = bills.map(bill => {
+    const totalGst = Number(bill.cgstAmount || 0) + Number(bill.sgstAmount || 0) + Number(bill.igstAmount || 0) + Number(bill.otherAmount || 0);
+    const grandTotal = Number(bill.grandTotal || 0);
+    const paid = Number(bill.paidAmount || 0);
+    const balance = Number(bill.balanceAmount ?? grandTotal - paid);
+    return `<tr>
+      <td><strong>${bill.billNo || '—'}</strong><br><small style="color:#64748b;">${(bill.items || []).length} item(s)</small></td>
+      <td>${bill.billDate || '—'}</td>
+      <td><strong>${bill.supplier || '—'}</strong><br><small style="font-family:monospace;color:#64748b;">${bill.vendorGstin || 'Unregistered'}</small></td>
+      <td>${bill.taxMode === 'INTER' ? 'IGST' : 'CGST + SGST'}</td>
+      <td style="text-align:right;">${formatINR(Number(bill.taxableValue || (bill.items || []).reduce((sum, item) => sum + Number(item.taxableValue || 0), 0)))}</td>
+      <td style="text-align:right;">${formatINR(totalGst)}</td>
+      <td style="text-align:right;font-weight:800;">${formatINR(grandTotal)}</td>
+      <td style="text-align:right;color:#2f855a;font-weight:700;">${formatINR(paid)}<br><small>${Number(bill.paymentPercent || (grandTotal ? paid / grandTotal * 100 : 0)).toFixed(2)}%</small></td>
+      <td style="text-align:right;color:${balance > 0 ? '#c53030' : '#2f855a'};font-weight:800;">${formatINR(balance)}</td>
+      <td><button type="button" class="secondary-btn btn-print-purchase-bill" data-bill="${bill.billNo}" style="padding:5px 9px;font-size:11px;">🖨️ View / Print</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:24px;">No purchase bills recorded yet. Use “Enter Purchase Bill” to create the first history record.</td></tr>';
 }
 
 function renderVehicleModels() {
