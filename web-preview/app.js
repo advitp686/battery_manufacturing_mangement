@@ -1179,6 +1179,7 @@ function render() {
               <div style="display:flex;gap:6px;">
                 <button class="secondary-btn btn-view-bom" data-idx="${idx}" style="padding:4px 8px;font-size:11px;">🔍 BOM</button>
                 <button class="secondary-btn btn-edit-model" data-idx="${idx}" style="padding:4px 8px;font-size:11px;background:#edf2f7;">✎ Edit</button>
+                <button class="secondary-btn btn-delete-model" data-idx="${idx}" style="padding:4px 8px;font-size:11px;color:#c53030;background:#fff5f5;">Delete</button>
               </div>
             </td>
           </tr>
@@ -2140,6 +2141,37 @@ function editModelModal(modelIdx) {
   updateLiveCost();
 
   setTimeout(() => $('#modal-fields input')?.focus(), 30);
+}
+
+async function deleteModel(modelIdx) {
+  if (!isUserAdmin()) {
+    toast('Access Denied: Catalog modifications require Administrator role.');
+    return;
+  }
+
+  const model = state.models[modelIdx];
+  if (!model) return;
+
+  const productionRefs = (state.production || []).filter(p => normalizeText(p.model) === normalizeText(model.name));
+  if (productionRefs.length) {
+    toast(`${model.name} is used by ${productionRefs.length} production record(s). Archive it instead of deleting.`);
+    return;
+  }
+
+  if (!confirm(`Delete battery model “${model.name}”? This cannot be undone.`)) return;
+
+  const previousState = JSON.stringify(state);
+  state.models.splice(modelIdx, 1);
+  const persistence = await saveState({ immediate: true });
+  if (!persistence.ok && !persistence.localOnly) {
+    restoreStateSnapshot(previousState);
+    render();
+    toast('Battery model deletion was not posted to the hosted database.');
+    return;
+  }
+
+  render();
+  toast(`Deleted battery model: ${model.name}`);
 }
 
 function issueReplacementModal(claimIdx) {
@@ -6203,6 +6235,13 @@ function bind() {
     if (editModelBtn) {
       e.preventDefault();
       editModelModal(editModelBtn.dataset.idx);
+      return;
+    }
+
+    const deleteModelBtn = e.target.closest('.btn-delete-model');
+    if (deleteModelBtn) {
+      e.preventDefault();
+      deleteModel(Number(deleteModelBtn.dataset.idx));
       return;
     }
 
