@@ -5098,8 +5098,11 @@ async function submitModal(e) {
     render();
     const dealerSelect = $('#dealer-statement-select');
     if (dealerSelect) { dealerSelect.value = party; renderDealerStatement(); }
+    const printAfterSave = $('#modal-backdrop').dataset.printAfterSave === 'true';
+    delete $('#modal-backdrop').dataset.printAfterSave;
     closeModal();
     toast(`Receipt ${receiptNo} saved in the dealer ledger. You can print it from the statement.`);
+    if (printAfterSave) setTimeout(() => printDealerReceipt(receiptNo), 120);
     return;
   }
 
@@ -5989,6 +5992,20 @@ function openDealerReceiptModal(preferredDealer = '') {
       <div class="field"><label>Amount in words</label><input name="receipt_words" value="ONE THOUSAND ONLY" readonly style="background:#f7fafc;" /></div>
       <div class="field full"><label>Remarks / Description</label><textarea name="receipt_remarks" rows="3" placeholder="e.g. Token received for vehicle booking"></textarea></div>
     </div>`;
+  const saveButton = $('#modal-form button[type="submit"]');
+  if (saveButton) {
+    saveButton.textContent = 'Save receipt';
+    const printButton = document.createElement('button');
+    printButton.type = 'button';
+    printButton.className = 'primary-btn';
+    printButton.textContent = 'Save & Print Receipt';
+    printButton.style.background = '#2b6cb0';
+    printButton.addEventListener('click', () => {
+      backdrop.dataset.printAfterSave = 'true';
+      $('#modal-form')?.requestSubmit();
+    });
+    saveButton.parentElement.insertBefore(printButton, saveButton);
+  }
   const amountInput = $('#modal-fields input[name="receipt_amount"]');
   const wordsInput = $('#modal-fields input[name="receipt_words"]');
   const updateWords = () => { if (wordsInput) wordsInput.value = numberToWords(Number(amountInput?.value || 0)); };
