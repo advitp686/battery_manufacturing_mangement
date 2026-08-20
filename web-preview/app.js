@@ -4445,8 +4445,18 @@ async function submitModal(e) {
       category: data.category || 'General Component Supplier'
     };
     if (!state.suppliers) state.suppliers = [];
+    if (state.suppliers.some(s => normalizeText(s.name) === normalizeText(newSupp.name))) {
+      toast(`Supplier already exists in the Supplier Accounts Master: ${newSupp.name}`);
+      return;
+    }
     state.suppliers.unshift(newSupp);
-    saveState();
+    const persistence = await saveState({ immediate: true });
+    if (!persistence.ok && !persistence.localOnly) {
+      restoreStateSnapshot(previousState);
+      render();
+      toast('Supplier was not posted to the hosted database. No supplier was created.');
+      return;
+    }
     render();
     showView('purchase-ledger');
     toast(`Registered new Supplier Master Account: ${newSupp.name}`);
@@ -4458,6 +4468,14 @@ async function submitModal(e) {
     const bankAcc = data.bankAccount || 'HDFC Bank Current A/C (50200012345678)';
     const dateStr = data.date || new Date().toISOString().split('T')[0];
 
+    if (!(state.suppliers || []).some(s => normalizeText(s.name) === normalizeText(suppName))) {
+      toast('Select a supplier from the Supplier Accounts Master.');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast('Payment amount must be greater than zero.');
+      return;
+    }
     if (!state.supplierLedger) state.supplierLedger = [];
 
     let totalCredit = 0;
@@ -4481,7 +4499,13 @@ async function submitModal(e) {
       bankAccount: bankAcc
     });
 
-    saveState();
+    const persistence = await saveState({ immediate: true });
+    if (!persistence.ok && !persistence.localOnly) {
+      restoreStateSnapshot(previousState);
+      render();
+      toast('Supplier payment was not posted to the hosted database. No payment was recorded.');
+      return;
+    }
     render();
     showView('purchase-ledger');
     toast(`💳 Recorded ${formatINR(amount)} Supplier Payment to ${suppName} via ${bankAcc}`);
@@ -6056,13 +6080,13 @@ function openSupplierPaymentModal(suppName = '') {
   const backdrop = $('#modal-backdrop');
   if (!backdrop) return;
 
-  const suppOptions = (state.suppliers || []).map(s => `<option value="${s.name}" ${s.name === suppName ? 'selected' : ''}>${s.name}</option>`).join('') || '<option value="EVE Energy Co., Ltd.">EVE Energy Co., Ltd.</option>';
+  const suppOptions = (state.suppliers || []).map(s => `<option value="${s.name}" ${s.name === suppName ? 'selected' : ''}>${s.name}</option>`).join('') || '<option value="">No registered suppliers</option>';
 
   $('#modal-title').textContent = 'Record Supplier Payment Debit (Bank A/C / Transfer)';
   $('#modal-fields').innerHTML = `
     <div class="form-grid">
       <div class="field full"><label style="font-weight:700;">Select Supplier *</label><select name="supplier">${suppOptions}</select></div>
-      <div class="field"><label style="font-weight:700;">Payment Amount (₹) *</label><input name="amount" type="number" step="0.01" value="50000" required /></div>
+      <div class="field"><label style="font-weight:700;">Payment Amount (₹) *</label><input name="amount" type="number" min="0.01" step="0.01" value="50000" required /></div>
       <div class="field"><label style="font-weight:700;">Paying Bank Account / Mode *</label>
         <select name="bankAccount" style="font-weight:700;">
           <option value="HDFC Bank Current A/C (50200012345678)">HDFC Bank — Current A/C (50200012345678)</option>
