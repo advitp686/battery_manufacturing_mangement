@@ -1968,6 +1968,10 @@ function populateSettingsUI() {
   if ($('#set-hsn-vehicle')) $('#set-hsn-vehicle').value = settings.hsnVehicle || '87116010';
   if ($('#set-hsn-charger')) $('#set-hsn-charger').value = settings.hsnCharger || '85044090';
   if ($('#set-admin-password')) $('#set-admin-password').value = '';
+  if ($('#set-sheet-id')) $('#set-sheet-id').value = localStorage.getItem('tejas_sheet_id') || '';
+  if ($('#set-webapp-url')) $('#set-webapp-url').value = localStorage.getItem('tejas_appscript_url') || '';
+  if ($('#set-sync-secret')) $('#set-sync-secret').value = localStorage.getItem('tejas_sync_secret') || '';
+  if ($('#set-client-name')) $('#set-client-name').value = localStorage.getItem('tejas_client_account_name') || '';
 
   renderBankAccountsSettings();
 }
@@ -3165,6 +3169,7 @@ function openGoogleSheetsModal() {
 
   const sheetId = localStorage.getItem('tejas_sheet_id') || '';
   const webhookUrl = localStorage.getItem('tejas_appscript_url') || '';
+  const syncSecret = localStorage.getItem('tejas_sync_secret') || '';
   const clientName = localStorage.getItem('tejas_client_account_name') || 'Client Account';
   const isConnected = !!webhookUrl || !!sheetId;
 
@@ -3222,6 +3227,11 @@ function openGoogleSheetsModal() {
         <label style="font-weight:700;font-size:11px;">Client Google Apps Script Web App URL *</label>
         <input id="input-client-webapp-url" name="appScriptUrl" value="${webhookUrl}" placeholder="https://script.google.com/macros/s/AKfycb.../exec" style="font-weight:700;" />
       </div>
+      <div class="field" style="margin-top:10px;">
+        <label style="font-weight:700;font-size:11px;">Private Sync Secret *</label>
+        <input id="input-client-sync-secret" name="syncSecret" type="password" autocomplete="new-password" value="${syncSecret}" placeholder="Create a private secret for this client" style="font-weight:700;" />
+        <small style="color:#64748b;font-size:10px;margin-top:3px;display:block;">Stored only in this browser and sent with each sync request.</small>
+      </div>
     </div>
 
     <!-- Step 4 -->
@@ -3265,6 +3275,7 @@ function openGoogleSheetsModal() {
     if (confirm('Disconnect current client Google Sheet account on this machine?')) {
       localStorage.removeItem('tejas_sheet_id');
       localStorage.removeItem('tejas_appscript_url');
+      localStorage.removeItem('tejas_sync_secret');
       localStorage.removeItem('tejas_client_account_name');
       toast('Disconnected client Google Sheet. You can now setup a new account.');
       openGoogleSheetsModal();
@@ -3277,6 +3288,7 @@ function openGoogleSheetsModal() {
 function testAndSyncClientGoogleSheet() {
   const rawSheetInput = $('#input-client-sheet-url')?.value || '';
   const webappUrl = $('#input-client-webapp-url')?.value || '';
+  const syncSecret = $('#input-client-sync-secret')?.value.trim() || '';
   const clientName = $('#input-client-account-name')?.value || 'Client Account';
 
   let sheetId = rawSheetInput;
@@ -3287,9 +3299,14 @@ function testAndSyncClientGoogleSheet() {
     toast('Please provide a Client Google Sheet URL or Web App URL first.');
     return;
   }
+  if (!syncSecret) {
+    toast('Please create a private sync secret before saving the connection.');
+    return;
+  }
 
   localStorage.setItem('tejas_sheet_id', sheetId);
   localStorage.setItem('tejas_appscript_url', webappUrl);
+  localStorage.setItem('tejas_sync_secret', syncSecret);
   localStorage.setItem('tejas_client_account_name', clientName);
 
   toast(`Saved ${clientName} Google Sheet configuration! Live sync active.`);
@@ -7108,6 +7125,10 @@ function bind() {
       return;
     }
     localStorage.setItem('tejas_system_settings', JSON.stringify(settings));
+    localStorage.setItem('tejas_sheet_id', $('#set-sheet-id')?.value?.trim() || '');
+    localStorage.setItem('tejas_appscript_url', $('#set-webapp-url')?.value?.trim() || '');
+    localStorage.setItem('tejas_sync_secret', $('#set-sync-secret')?.value?.trim() || '');
+    localStorage.setItem('tejas_client_account_name', $('#set-client-name')?.value?.trim() || 'Client Account');
     const settingsResponse = await fetch('/api/settings', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) });
     if (!settingsResponse.ok) {
       toast(`Settings were not saved on the hosted database (${settingsResponse.status}).`);
