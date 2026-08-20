@@ -3610,6 +3610,9 @@ function openModal(kind) {
     const chargerOptsHtml = chargerStock.length > 0
       ? chargerStock.map(c => `<option value="${c.material}" data-hsn="85044090" data-price="2500">${c.material} (${c.available})</option>`).join('')
       : '<option value="58.4V 10A Fast Battery Charger" data-hsn="85044090" data-price="2500">58.4V 10A Fast Battery Charger</option>';
+    const catalogItemOptsHtml = (state.components || []).length > 0
+      ? state.components.map(c => `<option value="${c.id}" data-hsn="${c.hsn || ''}" data-price="${Number(c.price || 0)}" data-gst="${Number(c.cgstRate || 0) + Number(c.sgstRate || 0) || 18}">${c.name} (${c.category || 'Component'}) — ₹${Number(c.price || 0).toLocaleString('en-IN')}</option>`).join('')
+      : '<option value="">No Master Catalogue items available</option>';
 
     const registeredDealers = state.dealers || [];
     const existingPartiesList = Array.from(new Set([
@@ -3746,6 +3749,7 @@ function openModal(kind) {
                 <option value="battery">Ready Battery Pack (From Stock)</option>
                 <option value="charger">Battery Charger (From Stock)</option>
                 <option value="accessory">Accessory / Component</option>
+                <option value="catalog">Master Catalogue Item</option>
                 <option value="custom">Custom / Manual Item</option>
               </select>
             </div>
@@ -3834,6 +3838,20 @@ function openModal(kind) {
             <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Qty *</label>
             <input name="item_qty_${idx}" type="number" value="1" min="1" class="calc-qty-input" data-row="${idx}" style="width:100%;box-sizing:border-box;padding:6px;font-size:12px;font-weight:700;text-align:center;border:1px solid #cbd5e1;" />
           `;
+        } else if (cat === 'catalog') {
+          pickerWrap.innerHTML = `
+            <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Select Item from Master Catalogue *</label>
+            <select name="item_select_${idx}" class="item-catalog-select" data-row="${idx}" style="width:100%;box-sizing:border-box;padding:6px;font-size:11px;font-weight:700;">
+              <option value="">-- Select Master Catalogue Item --</option>
+              ${catalogItemOptsHtml}
+            </select>
+          `;
+          rowEl.querySelector(`#item_hsn_${idx}`).value = '';
+          if (gstInput) gstInput.value = '18';
+          qtyWrap.innerHTML = `
+            <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Qty *</label>
+            <input name="item_qty_${idx}" type="number" value="1" min="1" step="1" class="calc-qty-input" data-row="${idx}" style="width:100%;box-sizing:border-box;padding:6px;font-size:12px;font-weight:700;text-align:center;border:1px solid #cbd5e1;" />
+          `;
         } else {
           pickerWrap.innerHTML = `<label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">Category Type</label><div style="font-size:11px;color:#64748b;padding:6px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:4px;">${cat === 'accessory' ? 'Accessory Item' : 'Custom Object'}</div>`;
           rowEl.querySelector(`#item_hsn_${idx}`).value = cat === 'accessory'
@@ -3883,6 +3901,21 @@ function openModal(kind) {
           const priceInput = rowEl.querySelector(`[name="item_price_${idx}"]`);
           if (priceInput) priceInput.value = '2500.00';
           if (gstInput) gstInput.value = '18';
+          recalculateTotals();
+        }
+      });
+
+      const catalogSelect = rowEl.querySelector('.item-catalog-select');
+      catalogSelect?.addEventListener('change', (e) => {
+        const option = e.target.selectedOptions[0];
+        const component = (state.components || []).find(c => c.id === e.target.value);
+        if (component && option) {
+          rowEl.querySelector(`#item_desc_${idx}`).value = component.name;
+          rowEl.querySelector(`#item_serial_${idx}`).value = component.id;
+          rowEl.querySelector(`#item_hsn_${idx}`).value = component.hsn || '';
+          const priceInput = rowEl.querySelector(`[name="item_price_${idx}"]`);
+          if (priceInput) priceInput.value = Number(component.price || 0).toFixed(2);
+          if (gstInput) gstInput.value = String(Number(option.dataset.gst || 18));
           recalculateTotals();
         }
       });
@@ -4554,7 +4587,17 @@ async function submitModal(e) {
 
   if (kind === 'vehicle-sale') {
     const invNo = 'VINV-2026-' + String((state.vehicleInvoices || []).length + 1).padStart(4, '0');
-    const party = data.party || 'EV Retail Buyer';
+    const isDealerSale = data.sale_channel === 'Dealer';
+    const party = isDealerSale ? data.dealer_account : data.party;
+    const selectedDealer = isDealerSale ? (state.dealers || []).find(d => normalizeText(d.name) === normalizeText(party)) : null;
+    if (isDealerSale && !selectedDealer) {
+      toast('Select a dealer from the registered Dealer Master list.');
+      return;
+    }
+    if (!party) {
+      toast('Enter a customer or select a registered dealer.');
+      return;
+    }
     const totalAmt = Number(data.grandTotal || 145000);
     const paidAmt = Number(data.paidAmount || totalAmt);
     const bankAcc = data.bankAccount || 'HDFC Bank Current A/C (50200012345678)';
@@ -4567,7 +4610,7 @@ async function submitModal(e) {
       phone: data.phone || '',
       address: data.address || '',
       partyState: data.partyState || 'UTTAR PRADESH',
-      type: (state.dealers || []).some(d => normalizeText(d.name) === normalizeText(party)) ? 'Dealer' : 'Retail',
+      type: isDealerSale ? 'Dealer' : 'Retail',
       date: new Date().toISOString().split('T')[0],
       model: data.model,
       chassisNo,
@@ -6325,7 +6368,13 @@ function openVehicleSaleModal(chassisIdx = null) {
       <div class="field"><label style="font-weight:700;">Battery Serial Installed</label><input name="batterySerial" id="veh-sale-battery" value="${initialVeh.batterySerial || ''}" readonly style="background:#edf2f7;" /></div>
       <div class="field"><label style="font-weight:700;">Vehicle Color</label><input name="color" id="veh-sale-color" value="${initialVeh.color || ''}" readonly style="background:#edf2f7;" /></div>
 
-      <div class="field full"><label style="font-weight:800;color:#2b6cb0;">Customer / Dealer Name (Auto-Suggest Database) *</label>
+      <div class="field"><label style="font-weight:800;color:#2b6cb0;">Sale Channel *</label>
+        <select name="sale_channel" id="veh-sale-channel" style="font-weight:700;"><option value="Retail">Direct Retail Customer</option><option value="Dealer">Registered Dealer</option></select>
+      </div>
+      <div class="field" id="veh-sale-dealer-wrap" hidden><label style="font-weight:800;color:#2b6cb0;">Dealer Account *</label>
+        <select name="dealer_account" id="veh-sale-dealer" style="font-weight:700;"><option value="">-- Select registered dealer --</option>${(state.dealers || []).map(d => `<option value="${d.name}">${d.name} — ${d.gstin || 'No GSTIN'}</option>`).join('')}</select>
+      </div>
+      <div class="field full"><label style="font-weight:800;color:#2b6cb0;">Customer / Dealer Name *</label>
         <input name="party" id="veh-sale-party-input" list="dealers-datalist" placeholder="Type or select Customer/Dealer..." value="RANJEET KUMAR" required style="font-weight:700;" />
         <datalist id="dealers-datalist">
           ${(state.dealers || []).map(d => `<option value="${d.name}">${d.name} (${d.gstin || 'Dealer'})</option>`).join('')}
@@ -6387,6 +6436,27 @@ function openVehicleSaleModal(chassisIdx = null) {
         if ($('#veh-sale-address')) $('#veh-sale-address').value = inv.address || '';
       }
     }
+  });
+
+  $('#veh-sale-channel')?.addEventListener('change', (e) => {
+    const dealerMode = e.target.value === 'Dealer';
+    const dealerWrap = $('#veh-sale-dealer-wrap');
+    if (dealerWrap) dealerWrap.hidden = !dealerMode;
+    const dealerSelect = $('#veh-sale-dealer');
+    const partyInput = $('#veh-sale-party-input');
+    if (dealerMode) {
+      if (!dealerSelect?.value) dealerSelect.value = dealerSelect?.options[1]?.value || '';
+      if (partyInput && dealerSelect?.value) partyInput.value = dealerSelect.value;
+      partyInput?.setAttribute('readonly', 'readonly');
+      dealerSelect?.dispatchEvent(new Event('change'));
+    } else {
+      partyInput?.removeAttribute('readonly');
+    }
+  });
+  $('#veh-sale-dealer')?.addEventListener('change', (e) => {
+    const partyInput = $('#veh-sale-party-input');
+    if (partyInput && e.target.value) partyInput.value = e.target.value;
+    partyInput?.dispatchEvent(new Event('change'));
   });
 }
 
