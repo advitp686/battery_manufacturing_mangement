@@ -739,6 +739,16 @@ function nextInvoiceNumber() {
   return `${prefix}${nextSeq}`;
 }
 
+function nextReceiptNumber() {
+  const year = new Date().getFullYear();
+  const prefix = `REC-${year}-`;
+  const seqs = (state.ledger || [])
+    .map(entry => String(entry.receiptNo || entry.ref || ''))
+    .filter(ref => ref.startsWith(prefix))
+    .map(ref => Number(ref.slice(prefix.length)) || 0);
+  return `${prefix}${String((seqs.length ? Math.max(...seqs) : 0) + 1).padStart(6, '0')}`;
+}
+
 function allocatePaymentToPartyInvoices(partyName, paymentAmount) {
   if (!partyName || paymentAmount <= 0) return;
   const partyKey = normalizeText(partyName);
@@ -5056,7 +5066,7 @@ async function submitModal(e) {
       toast('Select a registered dealer and enter a valid positive receipt amount.');
       return;
     }
-    const receiptNo = data.receipt_no || `REC-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+    const receiptNo = data.receipt_no || nextReceiptNumber();
     const partyKey = normalizeText(party);
     const receiptType = data.receipt_type || 'Token / Advance';
     const beforeBalance = (state.ledger || []).filter(l => normalizeText(l.party) === partyKey)
@@ -5955,7 +5965,7 @@ function openDealerReceiptModal(preferredDealer = '') {
   }
   const modalEl = $('.modal');
   if (modalEl) modalEl.style.width = 'min(620px, 98%)';
-  const receiptNo = `REC-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+  const receiptNo = nextReceiptNumber();
   $('#modal-title').textContent = `Dealer Receipt — ${selectedDealer}`;
   $('#modal-fields').innerHTML = `
     <div style="background:#ebf8ff;border:1px solid #bee3f8;border-radius:8px;padding:10px 12px;margin-bottom:12px;color:#2b6cb0;font-size:12px;">

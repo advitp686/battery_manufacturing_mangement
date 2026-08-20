@@ -158,6 +158,11 @@ async function initDatabase() {
     await pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS remarks TEXT`);
     await pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS purchase_bill_no TEXT`);
     await pool.query(`ALTER TABLE sales ADD COLUMN IF NOT EXISTS id BIGSERIAL`);
+    await pool.query(`ALTER TABLE ledger ADD COLUMN IF NOT EXISTS receipt_no TEXT`);
+    await pool.query(`ALTER TABLE ledger ADD COLUMN IF NOT EXISTS receipt_type TEXT`);
+    await pool.query(`ALTER TABLE ledger ADD COLUMN IF NOT EXISTS transaction_ref TEXT`);
+    await pool.query(`ALTER TABLE ledger ADD COLUMN IF NOT EXISTS amount_in_words TEXT`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_receipt_no ON ledger(receipt_no) WHERE receipt_no IS NOT NULL`);
     await pool.query(`ALTER TABLE models ADD COLUMN IF NOT EXISTS warranty_months INTEGER DEFAULT 24`);
     await pool.query(`ALTER TABLE models ADD COLUMN IF NOT EXISTS warranty_activation_rule TEXT DEFAULT 'sale_type_default'`);
     await pool.query(`ALTER TABLE warranties ADD COLUMN IF NOT EXISTS term_months INTEGER DEFAULT 24`);
