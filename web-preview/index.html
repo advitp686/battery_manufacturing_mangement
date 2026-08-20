@@ -631,6 +631,7 @@
                   </div>
                 </div>
                 <button class="primary-btn" id="btn-dealer-add-credit" style="width:100%;margin-top:14px;background:#16a34a;">＋ Record Payment Credit</button>
+                <button class="primary-btn" id="btn-dealer-receipt" style="width:100%;margin-top:8px;background:#2b6cb0;">＋ Receive Token / Issue Receipt</button>
                 <div style="display:grid;grid-template-columns: 1fr 1fr;gap:6px;margin-top:8px;">
                   <button class="secondary-btn" id="btn-dealer-credit-note" style="font-size:11px;padding:6px;background:#ebf8ff;color:#2b6cb0;font-weight:700;">＋ Credit Note</button>
                   <button class="secondary-btn" id="btn-dealer-debit-note" style="font-size:11px;padding:6px;background:#fff5f5;color:#c53030;font-weight:700;">＋ Debit Note</button>
@@ -657,6 +658,7 @@
                         <th style="text-align:right;">Credit (₹)</th>
                         <th style="text-align:right;">Balance (₹)</th>
                         <th>Bank Account / Mode</th>
+                        <th>Action</th>
                       </tr>
                     </thead>
                     <tbody id="dealer-statement-table"></tbody>
@@ -1227,6 +1229,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <div class="modal-backdrop" id="modal-backdrop" hidden><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-header"><h2 id="modal-title">New record</h2><button class="ghost-icon" id="modal-close" aria-label="Close">×</button></div><form id="modal-form"><div id="modal-fields"></div><div class="modal-footer"><button type="button" class="secondary-btn" id="modal-cancel">Cancel</button><button type="submit" class="primary-btn">Save record</button></div></form></div></div>
   <script src="qrcode.min.js"></script>
-<script src="app.js?v=20260820-dealer-save-validation"></script>
+<script src="app.js?v=20260820-dealer-receipt"></script>
 </body>
 </html>

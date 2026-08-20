@@ -4947,6 +4947,51 @@ async function submitModal(e) {
     toast(`Sales Invoice ${invNo} saved! HK Motors tax invoice ready & party ledger updated.`);
   }
 
+  if (kind === 'dealer-receipt') {
+    const party = data.receipt_party;
+    const amount = Number(data.receipt_amount || 0);
+    const dealer = (state.dealers || []).find(d => normalizeText(d.name) === normalizeText(party));
+    if (!dealer || amount <= 0) {
+      toast('Select a registered dealer and enter a valid positive receipt amount.');
+      return;
+    }
+    const receiptNo = data.receipt_no || `REC-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+    const partyKey = normalizeText(party);
+    const receiptType = data.receipt_type || 'Token / Advance';
+    const beforeBalance = (state.ledger || []).filter(l => normalizeText(l.party) === partyKey)
+      .reduce((sum, l) => sum + ledgerMoney(l.debit) - ledgerMoney(l.credit), 0);
+    if (receiptType === 'Payment against invoice') allocatePaymentToPartyInvoices(party, amount);
+    state.ledger.unshift({
+      id: 'LEDG-REC-' + Date.now().toString().slice(-8),
+      date: data.receipt_date || new Date().toISOString().split('T')[0],
+      party,
+      partyType: 'Dealer',
+      ref: receiptNo,
+      receiptNo,
+      receiptType,
+      desc: `${receiptType} received${data.receipt_remarks ? ` — ${data.receipt_remarks}` : ''}`,
+      debit: 0,
+      credit: amount,
+      balance: roundMoney(beforeBalance - amount),
+      bankAccount: data.receipt_mode || '',
+      transactionRef: data.receipt_ref || '',
+      amountInWords: data.receipt_words || numberToWords(amount)
+    });
+    const persistence = await saveState({ immediate: true });
+    if (!persistence.ok && !persistence.localOnly) {
+      restoreStateSnapshot(previousState);
+      render();
+      toast('Dealer receipt was not posted to the hosted database. Nothing was saved.');
+      return;
+    }
+    render();
+    const dealerSelect = $('#dealer-statement-select');
+    if (dealerSelect) { dealerSelect.value = party; renderDealerStatement(); }
+    closeModal();
+    toast(`Receipt ${receiptNo} saved in the dealer ledger. You can print it from the statement.`);
+    return;
+  }
+
   if (kind === 'payment-credit') {
     const party = data.credit_party;
     const amount = Number(data.credit_amount || 0);
@@ -5575,6 +5620,38 @@ function printPurchaseBill(billNo) {
   backdrop.removeAttribute('hidden'); backdrop.style.display = 'grid'; backdrop.dataset.kind = 'bom-view';
 }
 
+function printDealerReceipt(receiptNo) {
+  const entry = (state.ledger || []).find(l => l.receiptNo === receiptNo || l.ref === receiptNo);
+  if (!entry || !entry.partyType || normalizeText(entry.partyType) !== 'dealer') {
+    toast('Dealer receipt record was not found.');
+    return;
+  }
+  const settings = getSystemSettings();
+  const dealer = (state.dealers || []).find(d => normalizeText(d.name) === normalizeText(entry.party)) || {};
+  const amount = Number(entry.credit || 0);
+  const backdrop = $('#modal-backdrop');
+  if (!backdrop) return;
+  $('#modal-title').textContent = `Receipt — ${entry.receiptNo || entry.ref}`;
+  const modalEl = $('.modal');
+  if (modalEl) modalEl.style.width = 'min(820px, 98%)';
+  $('#modal-fields').innerHTML = `<div class="dealer-receipt-printable" style="font-family:Arial,sans-serif;color:#000;background:#fff;border:1px solid #111;padding:24px;">
+    <div style="text-align:center;border-bottom:1px solid #111;padding-bottom:12px;">
+      <div style="font-size:11px;text-align:left;">GSTIN: ${settings.gstin || '—'}</div>
+      <h1 style="margin:2px 0 4px;font-size:24px;">${settings.companyName || 'Lithynova EV Battery Systems'}</h1>
+      <div>${settings.address || ''}</div><div>${settings.phone || ''}${settings.email ? ` · ${settings.email}` : ''}</div>
+      <h2 style="margin:16px 0 0;text-decoration:underline;font-size:17px;">RECEIPT</h2>
+    </div>
+    <table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:12px;"><tbody>
+      <tr><td style="border:1px solid #111;padding:9px;width:52%;"><strong>Received With Thanks From</strong><br><span style="font-size:15px;font-weight:800;">${entry.party}</span><br>${dealer.gstin ? `GSTIN: ${dealer.gstin}` : ''}</td><td style="border:1px solid #111;padding:9px;"><strong>RECEIPT NO.</strong> ${entry.receiptNo || entry.ref}<br><strong>DATE</strong> ${entry.date}</td></tr>
+      <tr><td style="border:1px solid #111;padding:9px;"><strong>AMOUNT IN WORDS</strong><br>${entry.amountInWords || numberToWords(amount)}</td><td style="border:1px solid #111;padding:9px;font-size:18px;font-weight:800;">₹ ${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td></tr>
+      <tr><td style="border:1px solid #111;padding:9px;min-height:70px;"><strong>Description / Remarks</strong><br>${entry.desc || entry.receiptType || 'Receipt received'}</td><td style="border:1px solid #111;padding:9px;"><strong>For ${settings.companyName || 'Lithynova EV Battery Systems'}</strong><br><br><br>Authorised Signatory</td></tr>
+      <tr><td style="border:1px solid #111;padding:9px;"><strong>Deposited In / Mode</strong><br>${entry.bankAccount || '—'}</td><td style="border:1px solid #111;padding:9px;"><strong>Transaction / Cheque No.</strong><br>${entry.transactionRef || '—'}</td></tr>
+    </tbody></table>
+    <div style="margin-top:12px;font-size:11px;color:#374151;">Receipt type: ${entry.receiptType || 'Payment received'} · Ledger balance after receipt: ${formatINR(entry.balance || 0)}</div>
+  </div><div style="text-align:center;margin-top:10px;"><button type="button" class="primary-btn" onclick="window.print()">🖨️ Print Receipt</button></div>`;
+  backdrop.removeAttribute('hidden'); backdrop.style.display = 'grid'; backdrop.dataset.kind = 'bom-view';
+}
+
 function printHkMotorsInvoice(invNo) {
   const sourceInv = state.invoices.find(i => i.invoice === invNo);
   if (!sourceInv) return;
@@ -5762,6 +5839,53 @@ function openPaymentCreditModal(preferredParty = '') {
   modalBackdrop.removeAttribute('hidden');
   modalBackdrop.style.display = 'grid';
   modalBackdrop.dataset.kind = 'payment-credit';
+}
+
+function openDealerReceiptModal(preferredDealer = '') {
+  const dealers = (state.dealers || []).filter(d => d && d.name);
+  const selectedDealer = dealers.some(d => normalizeText(d.name) === normalizeText(preferredDealer))
+    ? dealers.find(d => normalizeText(d.name) === normalizeText(preferredDealer)).name
+    : (dealers[0]?.name || '');
+  const backdrop = $('#modal-backdrop');
+  if (!backdrop) return;
+  if (!dealers.length) {
+    toast('Add the dealer to the Dealer Master before recording a receipt.');
+    return;
+  }
+  const modalEl = $('.modal');
+  if (modalEl) modalEl.style.width = 'min(620px, 98%)';
+  const receiptNo = `REC-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+  $('#modal-title').textContent = `Dealer Receipt — ${selectedDealer}`;
+  $('#modal-fields').innerHTML = `
+    <div style="background:#ebf8ff;border:1px solid #bee3f8;border-radius:8px;padding:10px 12px;margin-bottom:12px;color:#2b6cb0;font-size:12px;">
+      This receipt is posted to the selected dealer's PostgreSQL ledger. It does not create a new dealer or store a PDF file.
+    </div>
+    <div class="form-grid">
+      <div class="field full"><label style="font-weight:800;">Received From Dealer *</label>
+        <select name="receipt_party" required style="font-weight:700;">${dealers.map(d => `<option value="${d.name}" ${normalizeText(d.name) === normalizeText(selectedDealer) ? 'selected' : ''}>${d.name}${d.gstin ? ` — ${d.gstin}` : ''}</option>`).join('')}</select>
+      </div>
+      <div class="field"><label>Receipt Date *</label><input name="receipt_date" type="date" value="${new Date().toISOString().split('T')[0]}" required /></div>
+      <div class="field"><label>Receipt No *</label><input name="receipt_no" value="${receiptNo}" readonly style="font-weight:800;background:#f7fafc;" /></div>
+      <div class="field"><label>Receipt Type *</label><select name="receipt_type" required>
+        <option value="Token / Advance">Token / Advance</option>
+        <option value="Payment against invoice">Payment against invoice</option>
+        <option value="Security deposit">Security deposit</option>
+        <option value="Other receipt">Other receipt</option>
+      </select></div>
+      <div class="field"><label>Amount Received (₹) *</label><input name="receipt_amount" type="number" min="0.01" step="0.01" value="1000" required style="font-weight:800;color:#16a34a;" /></div>
+      <div class="field full"><label>Payment Mode / Bank Account *</label><select name="receipt_mode" required>${getBankOptionsHtml()}</select></div>
+      <div class="field"><label>Transaction / Cheque / UTR No.</label><input name="receipt_ref" value="" placeholder="Optional reference" /></div>
+      <div class="field"><label>Amount in words</label><input name="receipt_words" value="ONE THOUSAND ONLY" readonly style="background:#f7fafc;" /></div>
+      <div class="field full"><label>Remarks / Description</label><textarea name="receipt_remarks" rows="3" placeholder="e.g. Token received for vehicle booking"></textarea></div>
+    </div>`;
+  const amountInput = $('#modal-fields input[name="receipt_amount"]');
+  const wordsInput = $('#modal-fields input[name="receipt_words"]');
+  const updateWords = () => { if (wordsInput) wordsInput.value = numberToWords(Number(amountInput?.value || 0)); };
+  amountInput?.addEventListener('input', updateWords);
+  updateWords();
+  backdrop.removeAttribute('hidden');
+  backdrop.style.display = 'grid';
+  backdrop.dataset.kind = 'dealer-receipt';
 }
 
 function renderDealersMaster() {
@@ -6003,6 +6127,7 @@ function renderDealerStatement() {
         <td style="text-align:right;color:#16a34a;">${credit ? formatINR(credit) : '—'}</td>
         <td style="text-align:right;font-weight:800;color:${runningBalance > 0 ? '#dc2626' : '#16a34a'};">${formatINR(runningBalance)}</td>
         <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${bankAcc}</span></td>
+        <td>${entry.receiptNo ? `<button class="secondary-btn btn-print-dealer-receipt" data-receipt="${entry.receiptNo}" style="padding:4px 8px;font-size:11px;">🖨️ Receipt</button>` : '—'}</td>
       </tr>
     `;
   }).join('');
@@ -6012,7 +6137,7 @@ function renderDealerStatement() {
   if ($('#dlr-stat-balance')) $('#dlr-stat-balance').textContent = formatINR(runningBalance);
   if ($('#dealer-statement-sub')) $('#dealer-statement-sub').textContent = `Debits ${formatINR(totalDebit)} · Credits ${formatINR(totalCredit)} · Balance ${formatINR(runningBalance)}`;
   if ($('#dealer-statement-table')) {
-    $('#dealer-statement-table').innerHTML = rows || `<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:18px;">No B2B ledger entries found for ${selectedDealer || 'this dealer'}.</td></tr>`;
+    $('#dealer-statement-table').innerHTML = rows || `<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:18px;">No B2B ledger entries found for ${selectedDealer || 'this dealer'}.</td></tr>`;
   }
 }
 
@@ -6342,6 +6467,13 @@ function bind() {
       return;
     }
 
+    if (e.target.id === 'btn-dealer-receipt') {
+      e.preventDefault();
+      const dlrSelect = $('#dealer-statement-select');
+      openDealerReceiptModal(dlrSelect ? dlrSelect.value : '');
+      return;
+    }
+
     const addDlrCreditBtn = e.target.closest('.btn-add-dealer-credit-direct');
     if (addDlrCreditBtn) {
       e.preventDefault();
@@ -6367,6 +6499,13 @@ function bind() {
     if (printPurchaseBtn) {
       e.preventDefault();
       printPurchaseBill(printPurchaseBtn.dataset.bill);
+      return;
+    }
+
+    const printDealerReceiptBtn = e.target.closest('.btn-print-dealer-receipt');
+    if (printDealerReceiptBtn) {
+      e.preventDefault();
+      printDealerReceipt(printDealerReceiptBtn.dataset.receipt);
       return;
     }
 
