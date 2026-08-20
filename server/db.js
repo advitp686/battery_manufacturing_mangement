@@ -157,6 +157,25 @@ async function initDatabase() {
     await pool.query(`ALTER TABLE warranties ADD COLUMN IF NOT EXISTS term_months INTEGER DEFAULT 24`);
     await pool.query(`ALTER TABLE warranties ADD COLUMN IF NOT EXISTS activation_rule TEXT DEFAULT 'sale_type_default'`);
     await pool.query(`ALTER TABLE warranties ADD COLUMN IF NOT EXISTS activation_date TEXT`);
+    await pool.query(`
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'components_price_nonnegative') THEN
+                ALTER TABLE components ADD CONSTRAINT components_price_nonnegative CHECK (price >= 0);
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'components_tax_rates_valid') THEN
+                ALTER TABLE components ADD CONSTRAINT components_tax_rates_valid CHECK (
+                    cgst_rate BETWEEN 0 AND 100 AND sgst_rate BETWEEN 0 AND 100 AND
+                    igst_rate BETWEEN 0 AND 100 AND other_tax_rate BETWEEN 0 AND 100
+                );
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'models_warranty_months_valid') THEN
+                ALTER TABLE models ADD CONSTRAINT models_warranty_months_valid CHECK (warranty_months BETWEEN 1 AND 120);
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'warranties_term_months_valid') THEN
+                ALTER TABLE warranties ADD CONSTRAINT warranties_term_months_valid CHECK (term_months BETWEEN 1 AND 120);
+            END IF;
+        END $$;
+    `);
     await pool.query(`ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_pkey`);
     await pool.query(`ALTER TABLE sales ADD CONSTRAINT sales_pkey PRIMARY KEY (id)`);
 }

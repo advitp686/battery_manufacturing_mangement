@@ -468,6 +468,21 @@ function addWarrantyMonths(dateValue, months) {
   return date;
 }
 
+function numericInputAttributes(name) {
+  const wholeNumberFields = new Set(['warrantyMonths', 'quantity', 'creditDays', 'comp_qty']);
+  const taxFields = new Set(['cgstRate', 'sgstRate', 'igstRate', 'otherTaxRate', 'gstRate']);
+  if (name === 'warrantyMonths') return ' min="1" max="120" step="1" inputmode="numeric"';
+  if (wholeNumberFields.has(name)) return ' min="0" step="1" inputmode="numeric"';
+  if (taxFields.has(name)) return ' min="0" max="100" step="0.01" inputmode="decimal"';
+  return ' min="0" step="0.01" inputmode="decimal"';
+}
+
+function validateComponentNumbers(data) {
+  const price = Number(data.price);
+  const rates = ['cgstRate', 'sgstRate', 'igstRate', 'otherTaxRate'].map(key => Number(data[key] || 0));
+  return Number.isFinite(price) && price >= 0 && rates.every(rate => Number.isFinite(rate) && rate >= 0 && rate <= 100);
+}
+
 function parseAvailableQty(value) {
   if (value == null) return 0;
   const raw = String(value).split('/')[0].replace(/,/g, '').trim();
@@ -2060,14 +2075,14 @@ function editComponentModal(compIdx) {
       <input type="hidden" name="compIdx" value="${compIdx}" />
       <div class="field full"><label>Component Name</label><input name="name" value="${comp.name}" required /></div>
       <div class="field"><label>Category / Type</label><input name="category" value="${comp.category}" placeholder="e.g. BMS, Switch, SOC Wire, Fuse" required /></div>
-      <div class="field"><label>Unit Price (₹)</label><input name="price" type="number" value="${comp.price}" required /></div>
+      <div class="field"><label>Unit Price (₹)</label><input name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${comp.price}" required /></div>
       <div class="field full"><label>Specifications</label><input name="spec" value="${comp.spec}" required /></div>
       <div class="field full"><label>Default Supplier</label><input name="supplier" value="${comp.supplier}" required /></div>
       <div class="field"><label>HSN Code</label><input name="hsn" value="${comp.hsn || ''}" /></div>
-      <div class="field"><label>CGST Rate (%)</label><input name="cgstRate" type="number" step="0.01" value="${comp.cgstRate ?? 0}" /></div>
-      <div class="field"><label>SGST Rate (%)</label><input name="sgstRate" type="number" step="0.01" value="${comp.sgstRate ?? 0}" /></div>
-      <div class="field"><label>IGST Rate (%)</label><input name="igstRate" type="number" step="0.01" value="${comp.igstRate ?? 0}" /></div>
-      <div class="field"><label>Other Tax/Cess (%)</label><input name="otherTaxRate" type="number" step="0.01" value="${comp.otherTaxRate ?? 0}" /></div>
+      <div class="field"><label>CGST Rate (%)</label><input name="cgstRate" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${comp.cgstRate ?? 0}" /></div>
+      <div class="field"><label>SGST Rate (%)</label><input name="sgstRate" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${comp.sgstRate ?? 0}" /></div>
+      <div class="field"><label>IGST Rate (%)</label><input name="igstRate" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${comp.igstRate ?? 0}" /></div>
+      <div class="field"><label>Other Tax/Cess (%)</label><input name="otherTaxRate" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${comp.otherTaxRate ?? 0}" /></div>
     </div>
   `;
 
@@ -2110,7 +2125,7 @@ function editModelModal(modelIdx) {
       <div style="font-weight:700;font-size:12px;color:#2f855a;white-space:nowrap;">${formatINR(c.price)}</div>
       <div style="display:flex;align-items:center;gap:4px;">
         <span style="font-size:10px;color:#718096;">Qty:</span>
-        <input type="number" name="comp_qty_${c.id}" value="${getQty(c)}" min="1" class="bom-qty-input" data-price="${c.price}" data-id="${c.id}" style="width:55px;padding:4px 6px;font-size:11px;border:1px solid #cbd5e0;border-radius:4px;" />
+        <input type="number" name="comp_qty_${c.id}" value="${getQty(c)}" min="1" step="1" inputmode="numeric" class="bom-qty-input" data-price="${c.price}" data-id="${c.id}" style="width:55px;padding:4px 6px;font-size:11px;border:1px solid #cbd5e0;border-radius:4px;" />
       </div>
     </div>
   `).join('');
@@ -3020,7 +3035,7 @@ function addRepairItemRow(name = '', hsn = '85044090', gst = 18, price = 0, qty 
     </div>
     <div>
       <label style="font-size:10px;color:#64748b;display:block;">GST Rate (%)</label>
-      <input name="item_gst[]" type="number" class="repair-gst-input" value="${gst}" style="width:100%;font-size:12px;padding:6px;font-weight:700;" />
+      <input name="item_gst[]" type="number" min="0" max="100" step="0.01" inputmode="decimal" class="repair-gst-input" value="${gst}" style="width:100%;font-size:12px;padding:6px;font-weight:700;" />
     </div>
     <div>
       <label style="font-size:10px;color:#64748b;display:block;">Unit Price (₹)</label>
@@ -3322,7 +3337,7 @@ function openModal(kind) {
     const previousState = JSON.stringify(state);
     const partyOptions = [...(state.suppliers || []), ...(state.dealers || [])].map(s => `<option value="${s.name}" data-gstin="${s.gstin || ''}">${s.name}</option>`).join('');
     const itemOptions = (state.components || []).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-    const makeRow = (c = state.components?.[0] || {}) => `<div class="purchase-line" style="display:grid;grid-template-columns:1.8fr .55fr .8fr .7fr .7fr .7fr .7fr .7fr auto;gap:6px;align-items:end;margin-bottom:7px;"><select name="purchase_item[]" class="purchase-item">${itemOptions}</select><input name="purchase_qty[]" type="number" min="0.01" step="0.01" value="1"><input name="purchase_price[]" type="number" min="0" step="0.01" value="${c.price || 0}"><input name="purchase_hsn[]" value="${c.hsn || ''}"><input name="purchase_cgst[]" type="number" step="0.01" value="${c.cgstRate ?? 0}"><input name="purchase_sgst[]" type="number" step="0.01" value="${c.sgstRate ?? 0}"><input name="purchase_igst[]" type="number" step="0.01" value="${c.igstRate ?? 0}"><input name="purchase_other[]" type="number" step="0.01" value="${c.otherTaxRate ?? 0}"><button type="button" class="secondary-btn btn-remove-purchase-line" style="padding:7px;color:#c53030;">×</button></div>`;
+    const makeRow = (c = state.components?.[0] || {}) => `<div class="purchase-line" style="display:grid;grid-template-columns:1.8fr .55fr .8fr .7fr .7fr .7fr .7fr .7fr auto;gap:6px;align-items:end;margin-bottom:7px;"><select name="purchase_item[]" class="purchase-item">${itemOptions}</select><input name="purchase_qty[]" type="number" min="0.01" step="0.01" inputmode="decimal" value="1"><input name="purchase_price[]" type="number" min="0" step="0.01" inputmode="decimal" value="${c.price || 0}"><input name="purchase_hsn[]" value="${c.hsn || ''}"><input name="purchase_cgst[]" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${c.cgstRate ?? 0}"><input name="purchase_sgst[]" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${c.sgstRate ?? 0}"><input name="purchase_igst[]" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${c.igstRate ?? 0}"><input name="purchase_other[]" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${c.otherTaxRate ?? 0}"><button type="button" class="secondary-btn btn-remove-purchase-line" style="padding:7px;color:#c53030;">×</button></div>`;
     $('#modal-title').textContent = 'Enter Purchase Bill (Multi-Item)';
     $('.modal').style.width = 'min(980px, 96vw)';
     const vehicleEntry = `<div class="vehicle-purchase-entry" style="border-top:1px solid #f6ad55;padding-top:10px;margin-top:10px;"><div class="form-grid"><div class="field"><label>Model number *</label><input name="vehicle_model_no[]" required></div><div class="field"><label>Chassis number *</label><input name="vehicle_chassis_no[]" required></div><div class="field"><label>Motor number *</label><input name="vehicle_motor_no[]" required></div><div class="field"><label>Controller number</label><input name="vehicle_controller_no[]"></div><div class="field"><label>Battery number</label><input name="vehicle_battery_no[]"></div><div class="field"><label>Vehicle color</label><input name="vehicle_color[]"></div><div class="field"><label>Vehicle price (₹) *</label><input name="vehicle_price[]" type="number" min="0" step="0.01" value="0" required></div><div class="field"><label>Other charges (₹)</label><input name="vehicle_other_charges[]" type="number" min="0" step="0.01" value="0"></div><div class="field"><label>CGST %</label><input name="vehicle_cgst[]" type="number" min="0" step="0.01" value="2.5"></div><div class="field"><label>SGST %</label><input name="vehicle_sgst[]" type="number" min="0" step="0.01" value="2.5"></div><div class="field"><label>IGST %</label><input name="vehicle_igst[]" type="number" min="0" step="0.01" value="5"></div><div class="field full"><label>Remarks</label><textarea name="vehicle_remarks[]" placeholder="Condition, accessories, registration or supplier notes"></textarea></div></div><button type="button" class="secondary-btn btn-remove-vehicle-line" style="color:#c53030;">Remove vehicle</button></div>`;
@@ -3355,7 +3370,7 @@ function openModal(kind) {
               : def.map(v => `<option>${v}</option>`).join('');
             return `<div class="field"><label for="field-${name}">${label}</label><select id="field-${name}" name="${name}">${options}</select></div>`;
           }
-          return `<div class="field ${type === 'textarea' ? 'full' : ''}"><label for="field-${name}">${label}</label>${type === 'textarea' ? `<textarea id="field-${name}" name="${name}">${def}</textarea>` : `<input id="field-${name}" name="${name}" type="${type}" value="${def}" />`}</div>`;
+          return `<div class="field ${type === 'textarea' ? 'full' : ''}"><label for="field-${name}">${label}</label>${type === 'textarea' ? `<textarea id="field-${name}" name="${name}">${def}</textarea>` : `<input id="field-${name}" name="${name}" type="${type}" value="${def}"${type === 'number' ? numericInputAttributes(name) : ''} />`}</div>`;
         }).join('')}
       </div>
     `;
@@ -3383,7 +3398,7 @@ function openModal(kind) {
         <div style="font-weight:700;font-size:12px;color:#2f855a;white-space:nowrap;">${formatINR(c.price)}</div>
         <div style="display:flex;align-items:center;gap:4px;">
           <span style="font-size:10px;color:#718096;">Qty:</span>
-          <input type="number" name="comp_qty_${c.id}" value="${c.category === 'Cell' ? 16 : 1}" min="1" class="bom-qty-input" data-price="${c.price}" data-id="${c.id}" style="width:55px;padding:4px 6px;font-size:11px;border:1px solid #cbd5e0;border-radius:4px;" />
+          <input type="number" name="comp_qty_${c.id}" value="${c.category === 'Cell' ? 16 : 1}" min="1" step="1" inputmode="numeric" class="bom-qty-input" data-price="${c.price}" data-id="${c.id}" style="width:55px;padding:4px 6px;font-size:11px;border:1px solid #cbd5e0;border-radius:4px;" />
         </div>
       </div>
     `).join('');
@@ -3392,8 +3407,13 @@ function openModal(kind) {
       <div class="form-grid">
         ${schema.fields.map(f => {
           const [name, label, type, def] = f;
-          if (type === 'select') return `<div class="field"><label for="field-${name}">${label}</label><select id="field-${name}" name="${name}">${def.map(v => `<option>${v}</option>`).join('')}</select></div>`;
-          return `<div class="field ${type === 'textarea' ? 'full' : ''}"><label for="field-${name}">${label}</label>${type === 'textarea' ? `<textarea id="field-${name}" name="${name}">${def}</textarea>` : `<input id="field-${name}" name="${name}" type="${type}" value="${def}" />`}</div>`;
+          if (type === 'select') {
+            const options = name === 'warrantyActivationRule'
+              ? '<option value="sale_type_default">Retail: sale day · Dealer: +1 month</option>'
+              : def.map(v => `<option>${v}</option>`).join('');
+            return `<div class="field"><label for="field-${name}">${label}</label><select id="field-${name}" name="${name}">${options}</select></div>`;
+          }
+          return `<div class="field ${type === 'textarea' ? 'full' : ''}"><label for="field-${name}">${label}</label>${type === 'textarea' ? `<textarea id="field-${name}" name="${name}">${def}</textarea>` : `<input id="field-${name}" name="${name}" type="${type}" value="${def}"${type === 'number' ? numericInputAttributes(name) : ''} />`}</div>`;
         }).join('')}
         
         <div class="field">
@@ -3487,8 +3507,8 @@ function openModal(kind) {
           </datalist>
         </div>
 
-        <div class="field"><label style="font-weight:700;">Quantity Received</label><input name="quantity" type="number" value="50" min="1" required /></div>
-        <div class="field"><label style="font-weight:700;">Unit Cost (₹)</label><input id="stock-unit-cost" name="unit_cost" type="number" value="${state.components[0]?.price || 0}" /></div>
+        <div class="field"><label style="font-weight:700;">Quantity Received</label><input name="quantity" type="number" value="50" min="1" step="1" inputmode="numeric" required /></div>
+        <div class="field"><label style="font-weight:700;">Unit Cost (₹)</label><input id="stock-unit-cost" name="unit_cost" type="number" min="0" step="0.01" inputmode="decimal" value="${state.components[0]?.price || 0}" /></div>
 
         <div class="field"><label style="font-weight:700;">Payment Status / Mode</label>
           <select name="payment_status" style="font-weight:700;">
@@ -3735,7 +3755,7 @@ function openModal(kind) {
               <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">HSN Code</label>
               <input name="item_hsn_${index}" value="${batteryHsn}" class="item-hsn-input" id="item_hsn_${index}" style="width:100%;box-sizing:border-box;padding:6px;font-size:11px;margin-bottom:6px;" />
               <label style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">GST %</label>
-              <input name="item_gst_${index}" type="number" step="0.01" value="${batteryRate}" class="calc-gst-input" data-row="${index}" style="width:100%;box-sizing:border-box;padding:6px;font-size:11px;font-weight:700;text-align:center;border:1px solid #cbd5e1;border-radius:4px;background:#fff7ed;" />
+              <input name="item_gst_${index}" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${batteryRate}" class="calc-gst-input" data-row="${index}" style="width:100%;box-sizing:border-box;padding:6px;font-size:11px;font-weight:700;text-align:center;border:1px solid #cbd5e1;border-radius:4px;background:#fff7ed;" />
             </div>
 
             <div id="qty-wrap-${index}" style="min-width:0;">
@@ -3930,9 +3950,9 @@ function openModal(kind) {
     <div class="form-grid">
       ${schema.fields.map(f => {
         const [name, label, type, def] = f;
-        const inputStep = type === 'number' ? '0.01' : '';
+        const inputAttrs = type === 'number' ? numericInputAttributes(name) : '';
         if (type === 'select') return `<div class="field"><label for="field-${name}">${label}</label><select id="field-${name}" name="${name}">${def.map(v => `<option>${v}</option>`).join('')}</select></div>`;
-        return `<div class="field ${type === 'textarea' ? 'full' : ''}"><label for="field-${name}">${label}</label>${type === 'textarea' ? `<textarea id="field-${name}" name="${name}">${def}</textarea>` : `<input id="field-${name}" name="${name}" type="${type}" value="${def}"${inputStep ? ` step="${inputStep}"` : ''} />`}</div>`;
+        return `<div class="field ${type === 'textarea' ? 'full' : ''}"><label for="field-${name}">${label}</label>${type === 'textarea' ? `<textarea id="field-${name}" name="${name}">${def}</textarea>` : `<input id="field-${name}" name="${name}" type="${type}" value="${def}"${inputAttrs} />`}</div>`;
       }).join('')}
     </div>
   `;
@@ -4137,6 +4157,10 @@ async function submitModal(e) {
   }
 
   if (kind === 'component') {
+    if (!validateComponentNumbers(data)) {
+      toast('Enter a non-negative price and tax rates from 0 to 100%.');
+      return;
+    }
     const newId = 'CMP-' + String(state.components.length + 1).padStart(3, '0');
     state.components.unshift({
       id: newId,
@@ -4159,6 +4183,10 @@ async function submitModal(e) {
   }
 
   if (kind === 'edit-component') {
+    if (!validateComponentNumbers(data)) {
+      toast('Enter a non-negative price and tax rates from 0 to 100%.');
+      return;
+    }
     const idx = Number(data.compIdx);
     if (state.components[idx]) {
       state.components[idx].name = data.name;
@@ -5988,8 +6016,8 @@ function openVehicleModelModal() {
       <div class="field"><label style="font-weight:700;">Motor Specifications</label><input name="motor" value="1200W BLDC Heavy Duty" /></div>
       <div class="field"><label style="font-weight:700;">Recommended Battery Pack</label><input name="batterySpec" value="LFP 51.2V 100Ah" /></div>
       <div class="field"><label style="font-weight:700;">Vehicle HSN Code</label><input name="hsn" value="87116010" /></div>
-      <div class="field"><label style="font-weight:700;">GST Rate (%)</label><input name="gstRate" type="number" value="5" /></div>
-      <div class="field full"><label style="font-weight:700;">Retail Ex-Showroom Price (₹) *</label><input name="price" type="number" value="145000" style="font-weight:800;" required /></div>
+      <div class="field"><label style="font-weight:700;">GST Rate (%)</label><input name="gstRate" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="5" /></div>
+      <div class="field full"><label style="font-weight:700;">Retail Ex-Showroom Price (₹) *</label><input name="price" type="number" min="0" step="0.01" inputmode="decimal" value="145000" style="font-weight:800;" required /></div>
     </div>
   `;
 
@@ -6018,7 +6046,7 @@ function openAddVehicleStockModal() {
       <div class="field"><label style="font-weight:700;">Vehicle Color</label><input name="color" value="Glossy Royal Blue" /></div>
       <div class="field"><label style="font-weight:700;">Other Charges (₹)</label><input name="otherCharges" type="number" min="0" step="0.01" value="0" /></div>
       <div class="field full"><label style="font-weight:700;">Remarks</label><textarea name="remarks"></textarea></div>
-      <div class="field full"><label style="font-weight:700;">Retail Ex-Showroom Price (₹) *</label><input name="price" id="veh-stock-price" type="number" value="145000" style="font-weight:800;" required /></div>
+          <div class="field full"><label style="font-weight:700;">Retail Ex-Showroom Price (₹) *</label><input name="price" id="veh-stock-price" type="number" min="0" step="0.01" inputmode="decimal" value="145000" style="font-weight:800;" required /></div>
     </div>
   `;
 
@@ -6075,8 +6103,8 @@ function openVehicleSaleModal(chassisIdx = null) {
 
       <div class="field"><label style="font-weight:700;">Vehicle HSN Code</label><input name="hsn" value="87116010" /></div>
 
-      <div class="field"><label style="font-weight:800;color:#2f855a;">Grand Total Sale Price (₹) *</label><input name="grandTotal" id="veh-sale-total" type="number" value="${initialVeh.price || 145000}" style="font-weight:800;font-size:15px;color:#2f855a;" required /></div>
-      <div class="field"><label style="font-weight:800;color:#2b6cb0;">Upfront Payment Received (₹) *</label><input name="paidAmount" id="veh-sale-paid" type="number" value="${initialVeh.price || 145000}" style="font-weight:800;font-size:15px;" required /></div>
+      <div class="field"><label style="font-weight:800;color:#2f855a;">Grand Total Sale Price (₹) *</label><input name="grandTotal" id="veh-sale-total" type="number" min="0" step="0.01" inputmode="decimal" value="${initialVeh.price || 145000}" style="font-weight:800;font-size:15px;color:#2f855a;" required /></div>
+      <div class="field"><label style="font-weight:800;color:#2b6cb0;">Upfront Payment Received (₹) *</label><input name="paidAmount" id="veh-sale-paid" type="number" min="0" step="0.01" inputmode="decimal" value="${initialVeh.price || 145000}" style="font-weight:800;font-size:15px;" required /></div>
     </div>
   `;
 
