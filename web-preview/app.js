@@ -3336,7 +3336,7 @@ function openModal(kind) {
 
   if (kind === 'purchase-bill') {
     const previousState = JSON.stringify(state);
-    const purchaseVendors = [...(state.suppliers || []), ...(state.dealers || [])].filter((vendor, index, all) => all.findIndex(item => normalizeText(item.name) === normalizeText(vendor.name)) === index);
+    const purchaseVendors = (state.suppliers || []).filter((vendor, index, all) => all.findIndex(item => normalizeText(item.name) === normalizeText(vendor.name)) === index);
     const itemOptions = (state.components || []).map(c => `<option value="${c.id}">${c.name} · ${c.category || 'Master item'}</option>`).join('');
     const purchaseGridColumns = 'minmax(240px, 2fr) 70px 110px 90px 90px 90px 90px 90px 38px';
     const makeRow = (c = state.components?.[0] || {}) => `<div class="purchase-line" style="display:grid;grid-template-columns:${purchaseGridColumns};min-width:900px;gap:6px;align-items:end;margin-bottom:7px;"><select name="purchase_item[]" class="purchase-item">${itemOptions}</select><input name="purchase_qty[]" type="number" min="0.01" step="0.01" inputmode="decimal" value="1"><input name="purchase_price[]" type="number" min="0" step="0.01" inputmode="decimal" value="${c.price || 0}"><input name="purchase_hsn[]" value="${c.hsn || ''}"><input name="purchase_cgst[]" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${c.cgstRate ?? 0}"><input name="purchase_sgst[]" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${c.sgstRate ?? 0}"><input name="purchase_igst[]" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${c.igstRate ?? 0}"><input name="purchase_other[]" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${c.otherTaxRate ?? 0}"><button type="button" class="secondary-btn btn-remove-purchase-line" style="padding:7px;color:#c53030;">×</button></div>`;
@@ -4226,7 +4226,7 @@ async function submitModal(e) {
   }
 
   if (kind === 'purchase-bill') {
-    const selectedVendor = [...(state.suppliers || []), ...(state.dealers || [])].find(vendor => normalizeText(vendor.name) === normalizeText(data.supplier));
+    const selectedVendor = (state.suppliers || []).find(vendor => normalizeText(vendor.name) === normalizeText(data.supplier));
     if (!selectedVendor) { toast('Search and select a registered vendor from the list.'); return; }
     const ids=formData.getAll('purchase_item[]'), qtys=formData.getAll('purchase_qty[]'), prices=formData.getAll('purchase_price[]'), hsns=formData.getAll('purchase_hsn[]'), cgsts=formData.getAll('purchase_cgst[]'), sgsts=formData.getAll('purchase_sgst[]'), igsts=formData.getAll('purchase_igst[]'), others=formData.getAll('purchase_other[]');
     const vendorGstin=String(data.vendor_gstin||'').trim().toUpperCase(), taxMode=getPurchaseTaxModeFromGstin(vendorGstin)||'INTRA';
