@@ -1,24 +1,28 @@
 const http = require('http');
 
-const API_KEY = 'lithynova-factory-2024';
 const BASE_URL = 'http://localhost:4173';
+const TEST_USERNAME = process.env.TEST_ADMIN_USERNAME || 'admin';
+const TEST_PASSWORD = process.env.TEST_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || '';
+let sessionCookie = '';
 
-function request(method, path, body = null, headers = {}) {
+function request(method, path, body = null, headers = {}, useSession = true) {
   return new Promise((resolve, reject) => {
     const url = new URL(path, BASE_URL);
     const options = {
       method,
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': API_KEY,
         ...headers,
       },
     };
+    if (useSession && sessionCookie) options.headers.Cookie = sessionCookie;
 
     const req = http.request(url, options, (res) => {
       let data = '';
       res.on('data', (chunk) => (data += chunk));
       res.on('end', () => {
+        const cookies = res.headers['set-cookie'];
+        if (cookies?.length) sessionCookie = cookies.map(cookie => cookie.split(';')[0]).join('; ');
         let parsed;
         try {
           parsed = data ? JSON.parse(data) : {};
@@ -36,7 +40,7 @@ function request(method, path, body = null, headers = {}) {
 }
 
 async function runTests() {
-  console.log('🧪 Running Lithynova SQLite API Verification Suite...\n');
+  console.log('🧪 Running Lithynova PostgreSQL session API verification suite...\n');
   let passed = 0;
   let failed = 0;
 
@@ -53,15 +57,21 @@ async function runTests() {
 
   // 1. Health check (no key required)
   await test('GET /api/health returns 200 OK', async () => {
-    const res = await request('GET', '/api/health', null, { 'X-API-Key': '' });
+    const res = await request('GET', '/api/health', null, {}, false);
     if (res.statusCode !== 200) throw new Error(`Status ${res.statusCode}`);
     if (res.body.status !== 'ok') throw new Error(`Unexpected body: ${JSON.stringify(res.body)}`);
   });
 
   // 2. Authentication check
-  await test('GET /api/components without valid API Key returns 401', async () => {
-    const res = await request('GET', '/api/components', null, { 'X-API-Key': 'wrong-key' });
+  await test('GET /api/components without a session returns 401', async () => {
+    const res = await request('GET', '/api/components', null, {}, false);
     if (res.statusCode !== 401) throw new Error(`Expected 401, got ${res.statusCode}`);
+  });
+
+  await test('POST /api/auth/login creates a session', async () => {
+    if (!TEST_PASSWORD) throw new Error('Set TEST_ADMIN_PASSWORD or ADMIN_PASSWORD before running server/test-api.js');
+    const res = await request('POST', '/api/auth/login', { username: TEST_USERNAME, password: TEST_PASSWORD }, {}, false);
+    if (res.statusCode !== 200) throw new Error(`Status ${res.statusCode}: ${JSON.stringify(res.body)}`);
   });
 
   // 3. Components CRUD
@@ -142,10 +152,9 @@ async function runTests() {
   });
 
   // 6. Backup endpoint
-  await test('POST /api/backup creates database backup file', async () => {
+  await test('POST /api/backup reports hosted backup policy', async () => {
     const res = await request('POST', '/api/backup');
-    if (res.statusCode !== 200) throw new Error(`Status ${res.statusCode}`);
-    if (!res.body.success) throw new Error('Backup failed');
+    if (res.statusCode !== 410) throw new Error(`Status ${res.statusCode}`);
   });
 
   console.log(`\n========================================`);

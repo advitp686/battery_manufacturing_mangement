@@ -37,7 +37,11 @@ if (CORS_ORIGIN) {
         credentials: true
     }));
 }
-app.use(express.json({ limit: '50mb' })); // Large limit for migration payload
+// Keep ordinary API requests small. The two bulk endpoints opt into the larger
+// parser below before this default parser runs.
+app.use('/api/migrate', express.json({ limit: '50mb' }));
+app.use('/api/sync-state', express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '1mb' }));
 app.use(session({
     store: new PgSession({ pool, tableName: 'user_sessions', createTableIfMissing: true }),
     secret: SESSION_SECRET,
@@ -66,14 +70,16 @@ app.use('/api', (req, res, next) => {
 
 app.post('/api/auth/login', async (req, res) => {
     const { username = 'admin', password = '' } = req.body || {};
+    const now = Date.now();
+    for (const [key, value] of loginAttempts) if (now > value.resetAt) loginAttempts.delete(key);
     const attemptKey = `${req.ip}:${username}`;
-    const attempt = loginAttempts.get(attemptKey) || { count: 0, resetAt: Date.now() + 15 * 60 * 1000 };
-    if (Date.now() > attempt.resetAt) { attempt.count = 0; attempt.resetAt = Date.now() + 15 * 60 * 1000; }
+    const attempt = loginAttempts.get(attemptKey) || { count: 0, resetAt: now + 15 * 60 * 1000 };
+    if (now > attempt.resetAt) { attempt.count = 0; attempt.resetAt = now + 15 * 60 * 1000; }
     if (attempt.count >= 10) return res.status(429).json({ error: 'Too many login attempts. Try again later.' });
     const account = (await query('SELECT username, role, password_hash FROM auth_users WHERE username = $1 AND active = TRUE', [username])).rows[0];
     const accountMatches = account ? await bcrypt.compare(password, account.password_hash) : false;
     const envAdminMatches = !account && username === 'admin' && (ADMIN_PASSWORD.startsWith('$2') ? await bcrypt.compare(password, ADMIN_PASSWORD) : password === ADMIN_PASSWORD);
-    const envStaffMatches = !account && username === 'staff' && STAFF_PASSWORD && password === STAFF_PASSWORD;
+    const envStaffMatches = !account && username === 'staff' && STAFF_PASSWORD && (STAFF_PASSWORD.startsWith('$2') ? await bcrypt.compare(password, STAFF_PASSWORD) : password === STAFF_PASSWORD);
     if (!accountMatches && !envAdminMatches && !envStaffMatches) {
         attempt.count += 1;
         loginAttempts.set(attemptKey, attempt);

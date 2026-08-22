@@ -411,7 +411,7 @@ function badge(text) {
     : t.includes('await') || t.includes('inspection') || t.includes('dealer') || t.includes('soon') || t.includes('draft')
     ? 'warn'
     : 'neutral';
-  return `<span class="badge ${c}">${text}</span>`;
+  return `<span class="badge ${c}">${escapeHtml(text)}</span>`;
 }
 
 function categoryBadge(cat) {
@@ -426,7 +426,7 @@ function categoryBadge(cat) {
     'Charger / Extra': 'amber'
   };
   const color = map[cat] || 'neutral';
-  return `<span class="badge ${color}">${cat}</span>`;
+  return `<span class="badge ${color}">${escapeHtml(cat)}</span>`;
 }
 
 function calcBomCost(bomList) {
@@ -440,6 +440,15 @@ function formatINR(val) {
 
 function normalizeText(value) {
   return String(value ?? '').trim().toLowerCase();
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 const DEFAULT_WARRANTY_MONTHS = 24;
@@ -1033,13 +1042,12 @@ function syncToGoogleSheets(manual = false) {
     method: 'POST',
     mode: 'no-cors',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      secret: syncSecret,
-      entityType: 'SystemStateBackup',
-      entityId: 'SYNC_' + Date.now(),
-      payload: state,
-      inventory: state.inventory,
-      production: state.production,
+      body: JSON.stringify({
+        secret: syncSecret,
+        entityType: 'SystemStateBackup',
+        entityId: 'SYNC_' + Date.now(),
+        inventory: state.inventory,
+        production: state.production,
       invoices: state.invoices,
       sales: state.sales,
       warranties: state.warranties,
@@ -1183,9 +1191,9 @@ function render() {
     if (recentPacksEl) {
       recentPacksEl.innerHTML = (state.production || []).slice(0, 5).map(p => `
         <tr>
-          <td><strong>${p.id}</strong></td>
-          <td>${p.model}</td>
-          <td>${p.operator}</td>
+          <td><strong>${escapeHtml(p.id)}</strong></td>
+          <td>${escapeHtml(p.model)}</td>
+          <td>${escapeHtml(p.operator)}</td>
           <td>${badge(p.qc)}</td>
           <td>${badge(p.status)}</td>
         </tr>
@@ -1197,9 +1205,9 @@ function render() {
     if (recentSalesEl) {
       recentSalesEl.innerHTML = (state.sales || []).slice(0, 5).map(s => `
         <tr>
-          <td><strong>${s.invoice}</strong></td>
-          <td>${s.pack}</td>
-          <td>${s.party}</td>
+          <td><strong>${escapeHtml(s.invoice)}</strong></td>
+          <td>${escapeHtml(s.pack)}</td>
+          <td>${escapeHtml(s.party)}</td>
           <td>${badge(s.type)}</td>
           <td>${badge(s.warranty)}</td>
         </tr>
@@ -1213,10 +1221,10 @@ function render() {
         const bomCount = m.bom ? m.bom.length : 0;
         return `
           <tr>
-            <td><strong>${m.name}</strong><br><small style="color:#718096">${m.code || 'MODEL-' + (idx+1)}</small></td>
-            <td>${m.chemistry}</td>
-            <td>${m.config}</td>
-            <td>${m.capacity}</td>
+            <td><strong>${escapeHtml(m.name)}</strong><br><small style="color:#718096">${escapeHtml(m.code || 'MODEL-' + (idx+1))}</small></td>
+            <td>${escapeHtml(m.chemistry)}</td>
+            <td>${escapeHtml(m.config)}</td>
+            <td>${escapeHtml(m.capacity)}</td>
             <td><span style="font-weight:700;color:#2b6cb0;">${bomCount} components</span></td>
             <td><strong style="color:#2f855a">${formatINR(bomCost)}</strong></td>
             <td>${formatModelWarranty(m)}</td>
@@ -1240,11 +1248,11 @@ function render() {
         const modelsUsing = (state.models || []).filter(m => m.bom && m.bom.some(b => b.componentId === c.id || b.name === c.name)).map(m => m.name);
         return `
           <tr>
-            <td><strong>${c.name}</strong><br><small style="color:#a0aec0">${c.id}</small></td>
+            <td><strong>${escapeHtml(c.name)}</strong><br><small style="color:#a0aec0">${escapeHtml(c.id)}</small></td>
             <td>${categoryBadge(c.category)}</td>
-            <td>${c.spec}</td>
+            <td>${escapeHtml(c.spec)}</td>
             <td><strong style="color:#2f855a">${formatINR(c.price)}</strong></td>
-            <td>${c.supplier}</td>
+            <td>${escapeHtml(c.supplier)}</td>
             <td><small>HSN ${c.hsn || '—'}</small><br><small>${c.cgstRate || 0}% CGST · ${c.sgstRate || 0}% SGST · ${c.igstRate || 0}% IGST · ${c.otherTaxRate || 0}% Other</small></td>
             <td>${modelsUsing.length > 0 ? `<span class="badge neutral">${modelsUsing.length} models</span>` : '<span style="color:#a0aec0">Unassigned</span>'}</td>
             <td><div style="display:flex;gap:5px;flex-wrap:wrap;"><button class="secondary-btn btn-edit-comp" data-idx="${idx}" style="padding:4px 10px;font-size:11px;">✎ Edit</button><button class="secondary-btn btn-delete-comp" data-idx="${idx}" style="padding:4px 10px;font-size:11px;color:#c53030;background:#fff5f5;">Delete</button></div></td>
@@ -1266,10 +1274,10 @@ function render() {
         const serial = p.serial === '—' ? p.id : p.serial;
         return `
           <tr>
-            <td><strong>${serial}</strong></td>
-            <td>${p.model}</td>
-            <td>${p.operator}</td>
-            <td>${p.built}</td>
+            <td><strong>${escapeHtml(serial)}</strong></td>
+            <td>${escapeHtml(p.model)}</td>
+            <td>${escapeHtml(p.operator)}</td>
+            <td>${escapeHtml(p.built)}</td>
             <td>${badge(p.qc)}</td>
             <td><strong>${badge(p.status)}</strong></td>
             <td>
@@ -1326,10 +1334,10 @@ function render() {
 
         return `
           <tr>
-            <td><strong>${p.id}</strong></td>
-            <td>${p.model}</td>
-            <td>${p.operator}</td>
-            <td>${p.built}</td>
+            <td><strong>${escapeHtml(p.id)}</strong></td>
+            <td>${escapeHtml(p.model)}</td>
+            <td>${escapeHtml(p.operator)}</td>
+            <td>${escapeHtml(p.built)}</td>
             <td>${badge(p.qc)}</td>
             <td><strong>${p.serial}</strong></td>
             <td>${badge(p.status)}</td>
@@ -1391,12 +1399,12 @@ function render() {
       dashLedgerEl.innerHTML = partySummaries.length > 0
         ? partySummaries.map(p => `
             <tr>
-              <td><strong>${p.party}</strong></td>
+              <td><strong>${escapeHtml(p.party)}</strong></td>
               <td style="text-align:right;">₹ ${p.debit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
               <td style="text-align:right;color:#16a34a;">₹ ${p.credit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
               <td style="text-align:right;"><strong style="color:${p.balance > 0 ? '#dc2626' : '#2563eb'};">₹ ${p.balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></td>
               <td style="text-align:center;">
-                <button class="secondary-btn btn-quick-record-payment" data-party="${p.party}" style="padding:3px 9px;font-size:11px;background:#edf2f7;font-weight:700;">＋ Record Payment</button>
+                <button class="secondary-btn btn-quick-record-payment" data-party="${escapeHtml(p.party)}" style="padding:3px 9px;font-size:11px;background:#edf2f7;font-weight:700;">＋ Record Payment</button>
               </td>
             </tr>
           `).join('')
@@ -1413,14 +1421,14 @@ function render() {
         const bankAcc = inv.bankAccount || (inv.paidAmount > 0 ? 'HDFC Bank Current A/C (50200012345678)' : 'On Credit Ledger');
         return `
           <tr>
-            <td><strong>${inv.invoice}</strong></td>
-            <td><strong>${inv.party}</strong><br><small style="color:#64748b;">${inv.phone ? 'Mob: ' + inv.phone : ''}</small></td>
+            <td><strong>${escapeHtml(inv.invoice)}</strong></td>
+            <td><strong>${escapeHtml(inv.party)}</strong><br><small style="color:#64748b;">${escapeHtml(inv.phone ? 'Mob: ' + inv.phone : '')}</small></td>
             <td>${badge(inv.type)}</td>
-            <td><span style="font-size:12px;font-weight:600;">${itemsSummary}</span></td>
+            <td><span style="font-size:12px;font-weight:600;">${escapeHtml(itemsSummary)}</span></td>
             <td>₹ ${inv.taxableValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
             <td><strong style="color:#1e293b;">₹ ${inv.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></td>
-            <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${bankAcc}</span></td>
-            <td>${inv.date}</td>
+            <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${escapeHtml(bankAcc)}</span></td>
+            <td>${escapeHtml(inv.date)}</td>
             <td>${badge(warrantyBadgeText)}</td>
             <td>
               <div style="display:flex;gap:4px;">
@@ -1458,7 +1466,7 @@ function render() {
 
     if ($('#warranty-table')) {
       $('#warranty-table').innerHTML = filteredWarranties.length > 0 ? filteredWarranties.map(w => `
-        <tr><td><strong>${w.pack}</strong></td><td>${w.customer}</td><td>${w.registered}</td><td>${w.end}</td><td>${badge(w.status)}</td></tr>
+        <tr><td><strong>${escapeHtml(w.pack)}</strong></td><td>${escapeHtml(w.customer)}</td><td>${escapeHtml(w.registered)}</td><td>${escapeHtml(w.end)}</td><td>${badge(w.status)}</td></tr>
       `).join('') : '<tr><td colspan="5" style="text-align:center;color:#a0aec0;padding:14px;">No warranties match the selected status or search filter.</td></tr>';
     }
 
@@ -1473,11 +1481,11 @@ function render() {
     if (unregEl) {
       unregEl.innerHTML = unregisteredPacks.length > 0 ? unregisteredPacks.map(p => `
         <tr>
-          <td><strong>${p.serial}</strong></td>
-          <td>${p.model}</td>
+          <td><strong>${escapeHtml(p.serial)}</strong></td>
+          <td>${escapeHtml(p.model)}</td>
           <td>${badge(p.status)}</td>
           <td>
-            <button class="primary-btn btn-activate-pack-warranty" data-serial="${p.serial}" style="padding:4px 8px;font-size:11px;background:#2b6cb0;">⚡ Activate</button>
+          <button class="primary-btn btn-activate-pack-warranty" data-serial="${escapeHtml(p.serial)}" style="padding:4px 8px;font-size:11px;background:#2b6cb0;">⚡ Activate</button>
           </td>
         </tr>
       `).join('') : '<tr><td colspan="4" style="text-align:center;color:#a0aec0;">All stock packs registered.</td></tr>';
@@ -3120,6 +3128,13 @@ function doPost(e) {
     if (!configuredSecret || payload.secret !== configuredSecret) {
       throw new Error('Invalid or missing sync secret.');
     }
+    if (payload.sheetName && Array.isArray(payload.data)) {
+      var genericRows = payload.data;
+      var genericHeaders = genericRows.length ? Object.keys(genericRows[0]) : ['No records'];
+      var genericSheet = getOrCreateSheet(ss, payload.sheetName, genericHeaders);
+      updateSheetData(genericSheet, genericRows.map(function(row) { return genericHeaders.map(function(header) { return row[header] ?? ''; }); }));
+      return ContentService.createTextOutput(JSON.stringify({ status: 'SUCCESS', message: payload.sheetName + ' synchronized' })).setMimeType(ContentService.MimeType.JSON);
+    }
     if (payload.action === 'ping') {
       return ContentService.createTextOutput(JSON.stringify({ status: 'SUCCESS', message: 'Connected to Client Google Sheet!', sheetTitle: ss.getName() })).setMimeType(ContentService.MimeType.JSON);
     }
@@ -3379,7 +3394,7 @@ function openModal(kind) {
     const bind = l => { l.querySelector('.purchase-item').addEventListener('change', e => { const c=state.components.find(x=>x.id===e.target.value); if(c){ l.querySelector('[name="purchase_price[]"]').value=c.price||0; l.querySelector('[name="purchase_hsn[]"]').value=c.hsn||''; l.querySelector('[name="purchase_cgst[]"]').value=c.cgstRate ?? 0; l.querySelector('[name="purchase_sgst[]"]').value=c.sgstRate??0; l.querySelector('[name="purchase_igst[]"]').value=c.igstRate??0; l.querySelector('[name="purchase_other[]"]').value=c.otherTaxRate??0; } recalc(); }); l.addEventListener('input', recalc); l.querySelector('.btn-remove-purchase-line').addEventListener('click',()=>{if($$('.purchase-line',lines).length>1){l.remove();recalc();}}); };
     const applyPurchaseTaxMode = () => { const gstinInput=$('#purchase-vendor-gstin'); const gstin=String(gstinInput.value||'').trim().toUpperCase(); gstinInput.value=gstin; const companyCode=getGstinStateCode(getSystemSettings().gstin); const vendorCode=getGstinStateCode(gstin); const mode=getPurchaseTaxModeFromGstin(gstin); const status=$('#purchase-tax-status'); $('#purchase-tax-mode').value=mode||'INTRA'; if(mode==='INTRA') { status.value=`Intra-state: CGST + SGST (state ${vendorCode})`; status.style.color='#2f855a'; } else if(mode==='INTER') { status.value=`Inter-state: IGST (state ${vendorCode})`; status.style.color='#2b6cb0'; } else if(!companyCode) { status.value='Set company GSTIN in System Settings'; status.style.color='#c53030'; } else { status.value='Enter a valid 15-character vendor GSTIN'; status.style.color='#c53030'; } recalc(); };
     const fillVendorGstin = () => { const name=normalizeText($('#purchase-supplier').value); const match=purchaseVendors.find(s=>normalizeText(s.name)===name); if(match?.gstin) $('#purchase-vendor-gstin').value=match.gstin; applyPurchaseTaxMode(); };
-    const renderVendorResults = query => { const results=$('#purchase-vendor-results'); if(!results) return; const term=normalizeText(query); if(term.length<2){ results.hidden=true; results.innerHTML=''; return; } const matches=purchaseVendors.filter(v=>normalizeText(v.name).includes(term) || normalizeText(v.gstin).includes(term)).slice(0,50); results.innerHTML=matches.map(v=>`<button type="button" class="purchase-vendor-option" data-vendor-name="${v.name}" style="display:block;width:100%;padding:9px 10px;text-align:left;border:0;border-bottom:1px solid #edf2f7;background:#fff;cursor:pointer;"><strong>${v.name}</strong><small style="display:block;color:#64748b;">${v.gstin || 'Unregistered'} · ${v.category || 'Vendor'}</small></button>`).join('') || '<div style="padding:10px;color:#64748b;">No registered vendor found.</div>'; results.hidden=false; };
+ const renderVendorResults = query => { const results=$('#purchase-vendor-results'); if(!results) return; const term=normalizeText(query); if(term.length<2){ results.hidden=true; results.innerHTML=''; return; } const matches=purchaseVendors.filter(v=>normalizeText(v.name).includes(term) || normalizeText(v.gstin).includes(term)).slice(0,50); results.innerHTML=matches.map(v=>`<button type="button" class="purchase-vendor-option" data-vendor-name="${escapeHtml(v.name)}" style="display:block;width:100%;padding:9px 10px;text-align:left;border:0;border-bottom:1px solid #edf2f7;background:#fff;cursor:pointer;"><strong>${escapeHtml(v.name)}</strong><small style="display:block;color:#64748b;">${escapeHtml(v.gstin || 'Unregistered')} · ${escapeHtml(v.category || 'Vendor')}</small></button>`).join('') || '<div style="padding:10px;color:#64748b;">No registered vendor found.</div>'; results.hidden=false; };
     const selectPurchaseVendor = name => { const match=purchaseVendors.find(v=>normalizeText(v.name)===normalizeText(name)); if(!match) return; $('#purchase-supplier').value=match.name; $('#purchase-supplier-search').value=match.name; $('#purchase-vendor-results').hidden=true; fillVendorGstin(); };
     const toggleVehicleFields = isVehicle => { $$('#vehicle-purchase-fields input, #vehicle-purchase-fields textarea').forEach(input => { input.disabled = !isVehicle; }); };
     $('#purchase-supplier-search').addEventListener('input', e=>{ $('#purchase-supplier').value=''; $('#purchase-vendor-gstin').value=''; renderVendorResults(e.target.value); }); $('#purchase-supplier-search').addEventListener('focus', e=>renderVendorResults(e.target.value)); $('#purchase-vendor-results').addEventListener('click', e=>{ const option=e.target.closest('.purchase-vendor-option'); if(option) selectPurchaseVendor(option.dataset.vendorName); }); $('#purchase-vendor-gstin').addEventListener('input', applyPurchaseTaxMode); $('#purchase-payment-amount').addEventListener('input', recalc); $('#purchase-payment-status').addEventListener('change', recalc); $('#purchase-type').addEventListener('change', e => { const isVehicle=e.target.value==='vehicle'; $('#vehicle-purchase-fields').hidden=!isVehicle; $('#purchase-item-section').hidden=isVehicle; toggleVehicleFields(isVehicle); recalc(); }); $('#btn-add-vehicle-line').addEventListener('click',()=>{ $('#vehicle-purchase-lines').insertAdjacentHTML('beforeend',vehicleEntry); bindVehicleLines(); toggleVehicleFields($('#purchase-type').value==='vehicle'); recalc(); });
@@ -4083,6 +4098,12 @@ function closeModal() {
 
 async function submitModal(e) {
   e.preventDefault();
+  const form = e.target;
+  if (form.dataset.submitting === 'true') return;
+  form.dataset.submitting = 'true';
+  const submitButtons = [...form.querySelectorAll('button[type="submit"]')];
+  submitButtons.forEach(button => { button.disabled = true; button.dataset.previousText = button.textContent; });
+  try {
   const kind = $('#modal-backdrop').dataset.kind;
   const previousState = JSON.stringify(state);
 
@@ -5565,7 +5586,7 @@ async function submitModal(e) {
             sgstRate: 0,
             sgstAmount: sgst,
             igstRate: 0,
-            igstAmount: 0,
+            igstAmount: invoiceTotals.igstAmount,
             cessAmount: 0,
             grandTotal: grandTotal,
             paidAmount: grandTotal,
@@ -5668,6 +5689,14 @@ async function submitModal(e) {
   }
 
   closeModal();
+  } finally {
+    form.dataset.submitting = 'false';
+    submitButtons.forEach(button => {
+      button.disabled = false;
+      if (button.dataset.previousText !== undefined) button.textContent = button.dataset.previousText;
+      delete button.dataset.previousText;
+    });
+  }
 }
 
 function lookup(token) {
@@ -5833,18 +5862,18 @@ function printDealerReceipt(receiptNo) {
   if (modalEl) modalEl.style.width = 'min(820px, 98%)';
   $('#modal-fields').innerHTML = `<div class="dealer-receipt-printable" style="font-family:Arial,sans-serif;color:#000;background:#fff;border:1px solid #111;padding:24px;">
     <div style="text-align:center;border-bottom:1px solid #111;padding-bottom:12px;">
-      <div style="font-size:11px;text-align:left;">GSTIN: ${settings.gstin || '—'}</div>
-      <h1 style="margin:2px 0 4px;font-size:24px;">${settings.companyName || 'Lithynova EV Battery Systems'}</h1>
-      <div>${settings.address || ''}</div><div>${settings.phone || ''}${settings.email ? ` · ${settings.email}` : ''}</div>
+      <div style="font-size:11px;text-align:left;">GSTIN: ${escapeHtml(settings.gstin || '—')}</div>
+      <h1 style="margin:2px 0 4px;font-size:24px;">${escapeHtml(settings.companyName || 'Lithynova EV Battery Systems')}</h1>
+      <div>${escapeHtml(settings.address || '')}</div><div>${escapeHtml(settings.phone || '')}${settings.email ? ` · ${escapeHtml(settings.email)}` : ''}</div>
       <h2 style="margin:16px 0 0;text-decoration:underline;font-size:17px;">RECEIPT</h2>
     </div>
     <table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:12px;"><tbody>
-      <tr><td style="border:1px solid #111;padding:9px;width:52%;"><strong>Received With Thanks From</strong><br><span style="font-size:15px;font-weight:800;">${entry.party}</span><br>${dealer.gstin ? `GSTIN: ${dealer.gstin}` : ''}</td><td style="border:1px solid #111;padding:9px;"><strong>RECEIPT NO.</strong> ${entry.receiptNo || entry.ref}<br><strong>DATE</strong> ${entry.date}</td></tr>
-      <tr><td style="border:1px solid #111;padding:9px;"><strong>AMOUNT IN WORDS</strong><br>${entry.amountInWords || numberToWords(amount)}</td><td style="border:1px solid #111;padding:9px;font-size:18px;font-weight:800;">₹ ${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td></tr>
-      <tr><td style="border:1px solid #111;padding:9px;min-height:70px;"><strong>Description / Remarks</strong><br>${entry.desc || entry.receiptType || 'Receipt received'}</td><td style="border:1px solid #111;padding:9px;"><strong>For ${settings.companyName || 'Lithynova EV Battery Systems'}</strong><br><br><br>Authorised Signatory</td></tr>
-      <tr><td style="border:1px solid #111;padding:9px;"><strong>Deposited In / Mode</strong><br>${entry.bankAccount || '—'}</td><td style="border:1px solid #111;padding:9px;"><strong>Transaction / Cheque No.</strong><br>${entry.transactionRef || '—'}</td></tr>
+      <tr><td style="border:1px solid #111;padding:9px;width:52%;"><strong>Received With Thanks From</strong><br><span style="font-size:15px;font-weight:800;">${escapeHtml(entry.party)}</span><br>${dealer.gstin ? `GSTIN: ${escapeHtml(dealer.gstin)}` : ''}</td><td style="border:1px solid #111;padding:9px;"><strong>RECEIPT NO.</strong> ${escapeHtml(entry.receiptNo || entry.ref)}<br><strong>DATE</strong> ${escapeHtml(entry.date)}</td></tr>
+      <tr><td style="border:1px solid #111;padding:9px;"><strong>AMOUNT IN WORDS</strong><br>${escapeHtml(entry.amountInWords || numberToWords(amount))}</td><td style="border:1px solid #111;padding:9px;font-size:18px;font-weight:800;">₹ ${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td></tr>
+      <tr><td style="border:1px solid #111;padding:9px;min-height:70px;"><strong>Description / Remarks</strong><br>${escapeHtml(entry.desc || entry.receiptType || 'Receipt received')}</td><td style="border:1px solid #111;padding:9px;"><strong>For ${escapeHtml(settings.companyName || 'Lithynova EV Battery Systems')}</strong><br><br><br>Authorised Signatory</td></tr>
+      <tr><td style="border:1px solid #111;padding:9px;"><strong>Deposited In / Mode</strong><br>${escapeHtml(entry.bankAccount || '—')}</td><td style="border:1px solid #111;padding:9px;"><strong>Transaction / Cheque No.</strong><br>${escapeHtml(entry.transactionRef || '—')}</td></tr>
     </tbody></table>
-    <div style="margin-top:12px;font-size:11px;color:#374151;">Receipt type: ${entry.receiptType || 'Payment received'} · Ledger balance after receipt: ${formatINR(entry.balance || 0)}</div>
+    <div style="margin-top:12px;font-size:11px;color:#374151;">Receipt type: ${escapeHtml(entry.receiptType || 'Payment received')} · Ledger balance after receipt: ${formatINR(entry.balance || 0)}</div>
   </div><div style="text-align:center;margin-top:10px;"><button type="button" class="primary-btn" onclick="window.print()">🖨️ Print Receipt</button></div>`;
   backdrop.removeAttribute('hidden'); backdrop.style.display = 'grid'; backdrop.dataset.kind = 'bom-view';
 }
@@ -5872,31 +5901,31 @@ function printHkMotorsInvoice(invNo) {
   $('#modal-fields').innerHTML = `
     <div class="hk-invoice-printable" style="font-family:'Segoe UI',sans-serif;color:#000;background:#fff;padding:20px;border:1px solid #000;border-radius:4px;margin-bottom:14px;">
       <div style="text-align:center;font-size:11px;font-weight:800;text-transform:uppercase;border-bottom:1px solid #000;padding-bottom:4px;letter-spacing:0.5px;">
-        SUBJECT TO ${jurisdictionText} JURISDICTION
+        SUBJECT TO ${escapeHtml(jurisdictionText)} JURISDICTION
       </div>
       <div style="text-align:center;padding:10px 0;border-bottom:1px solid #000;">
-        <h1 style="font-size:24px;font-weight:900;margin:0;letter-spacing:1px;color:#000;">${companyName}</h1>
-        <div style="font-size:12px;font-weight:800;margin-top:2px;">${companyTagline}</div>
-        <div style="font-size:11px;margin-top:4px;">${companyAddress}</div>
-        <div style="font-size:11px;">Phone: ${companyPhone} | Email: ${companyEmail}</div>
-        <div style="font-size:11px;font-weight:800;margin-top:2px;">GSTIN - ${companyGstin}</div>
+        <h1 style="font-size:24px;font-weight:900;margin:0;letter-spacing:1px;color:#000;">${escapeHtml(companyName)}</h1>
+        <div style="font-size:12px;font-weight:800;margin-top:2px;">${escapeHtml(companyTagline)}</div>
+        <div style="font-size:11px;margin-top:4px;">${escapeHtml(companyAddress)}</div>
+        <div style="font-size:11px;">Phone: ${escapeHtml(companyPhone)} | Email: ${escapeHtml(companyEmail)}</div>
+        <div style="font-size:11px;font-weight:800;margin-top:2px;">GSTIN - ${escapeHtml(companyGstin)}</div>
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #000;padding:6px 12px;background:#f8fafc;">
         <div style="font-weight:900;font-size:15px;letter-spacing:0.5px;">TAX INVOICE</div>
         <div style="text-align:right;font-size:12px;font-weight:700;">
-          <div>Invoice No. : <span style="font-weight:900;">${inv.invoice}</span></div>
-          <div>Date : <span>${inv.date}</span></div>
+          <div>Invoice No. : <span style="font-weight:900;">${escapeHtml(inv.invoice)}</span></div>
+          <div>Date : <span>${escapeHtml(inv.date)}</span></div>
         </div>
       </div>
       <div style="display:grid;grid-template-columns: 2fr 1fr;border-bottom:1px solid #000;padding:8px 12px;font-size:12px;line-height:1.6;">
         <div>
-          <div><strong>Customer / Dealer :</strong> ${inv.party}</div>
-          ${inv.fatherName ? `<div><strong>S/o (Father/Contact) :</strong> ${inv.fatherName}</div>` : ''}
-          ${inv.address ? `<div><strong>Address :</strong> ${inv.address}</div>` : ''}
+          <div><strong>Customer / Dealer :</strong> ${escapeHtml(inv.party)}</div>
+          ${inv.fatherName ? `<div><strong>S/o (Father/Contact) :</strong> ${escapeHtml(inv.fatherName)}</div>` : ''}
+          ${inv.address ? `<div><strong>Address :</strong> ${escapeHtml(inv.address)}</div>` : ''}
         </div>
         <div>
-          ${inv.phone ? `<div><strong>Mobile No :</strong> ${inv.phone}</div>` : ''}
-          ${inv.vehicle ? `<div><strong>Vehicle / Ref No :</strong> ${inv.vehicle}</div>` : ''}
+          ${inv.phone ? `<div><strong>Mobile No :</strong> ${escapeHtml(inv.phone)}</div>` : ''}
+          ${inv.vehicle ? `<div><strong>Vehicle / Ref No :</strong> ${escapeHtml(inv.vehicle)}</div>` : ''}
         </div>
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:11px;border-bottom:1px solid #000;">
@@ -5917,10 +5946,10 @@ function printHkMotorsInvoice(invNo) {
             <tr style="border-bottom:1px solid #ddd;">
               <td style="border-right:1px solid #000;padding:6px;text-align:center;vertical-align:top;font-weight:700;">${item.sr}</td>
               <td style="border-right:1px solid #000;padding:6px;vertical-align:top;line-height:1.5;">
-                <div style="font-weight:900;font-size:13px;">${item.desc}</div>
-                ${item.packSerial ? `<div style="font-size:11px;color:#2b6cb0;">Serial No: <strong>${item.packSerial}</strong></div>` : ''}
+                <div style="font-weight:900;font-size:13px;">${escapeHtml(item.desc)}</div>
+                ${item.packSerial ? `<div style="font-size:11px;color:#2b6cb0;">Serial No: <strong>${escapeHtml(item.packSerial)}</strong></div>` : ''}
               </td>
-              <td style="border-right:1px solid #000;padding:6px;text-align:center;vertical-align:top;font-weight:700;">${item.hsn || '87116020'}</td>
+              <td style="border-right:1px solid #000;padding:6px;text-align:center;vertical-align:top;font-weight:700;">${escapeHtml(item.hsn || '87116020')}</td>
               <td style="border-right:1px solid #000;padding:6px;text-align:center;vertical-align:top;font-weight:700;">${item.qty || 1}</td>
               <td style="border-right:1px solid #000;padding:6px;text-align:right;vertical-align:top;font-weight:700;">${(item.price || 0).toFixed(2)}</td>
               <td style="border-right:1px solid #000;padding:6px;text-align:center;vertical-align:top;font-weight:800;">${Number(item.gstRate || 0).toFixed(2)}%</td>
@@ -5960,7 +5989,7 @@ function printHkMotorsInvoice(invNo) {
         </div>
       </div>
       <div style="border-bottom:1px solid #000;padding:6px 12px;font-size:11px;font-weight:900;background:#fafafa;">
-        AMOUNT IN WORD : ${inv.amountInWords}
+        AMOUNT IN WORD : ${escapeHtml(inv.amountInWords)}
       </div>
       <div style="padding:8px 12px;font-size:10px;line-height:1.4;border-bottom:1px solid #000;background:#fff;">
         <div style="font-weight:900;margin-bottom:2px;">नियम और शर्तें:</div>
@@ -5974,7 +6003,7 @@ function printHkMotorsInvoice(invNo) {
       <div style="display:flex;justify-content:space-between;align-items:flex-end;padding:20px 12px 6px;font-size:11px;font-weight:800;">
         <div>Customer Signature</div>
         <div style="text-align:right;">
-          <div style="margin-bottom:24px;">For ${companyName}</div>
+          <div style="margin-bottom:24px;">For ${escapeHtml(companyName)}</div>
           <div>Authorised Signature</div>
         </div>
       </div>
@@ -6111,16 +6140,16 @@ function renderDealersMaster() {
       const balance = entries.reduce((sum, entry) => sum + ledgerMoney(entry.debit) - ledgerMoney(entry.credit), 0);
       return `
         <tr>
-          <td><strong>${d.id || 'DLR'}</strong></td>
-          <td><strong>${d.title || ''} ${d.name || ''}</strong></td>
-          <td>${d.gstin || '—'}</td>
+          <td><strong>${escapeHtml(d.id || 'DLR')}</strong></td>
+          <td><strong>${escapeHtml(`${d.title || ''} ${d.name || ''}`)}</strong></td>
+          <td>${escapeHtml(d.gstin || '—')}</td>
           <td>${badge(d.gstType || 'Dealer')}</td>
-          <td>${d.contactPerson || '—'}</td>
-          <td>${[d.city, d.state].filter(Boolean).join(', ') || '—'}</td>
-          <td>${d.phone || '—'}</td>
+          <td>${escapeHtml(d.contactPerson || '—')}</td>
+          <td>${escapeHtml([d.city, d.state].filter(Boolean).join(', ') || '—')}</td>
+          <td>${escapeHtml(d.phone || '—')}</td>
           <td style="text-align:right;">${formatINR(d.creditLimit || 0)}</td>
           <td style="text-align:right;font-weight:800;color:${balance > 0 ? '#dc2626' : '#16a34a'};">${formatINR(balance)}</td>
-          <td><button class="secondary-btn btn-view-dealer-statement" data-dealer="${d.name}" style="padding:4px 8px;font-size:11px;">View statement</button></td>
+          <td><button class="secondary-btn btn-view-dealer-statement" data-dealer="${escapeHtml(d.name)}" style="padding:4px 8px;font-size:11px;">View statement</button></td>
         </tr>
       `;
     }).join('') : '<tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:18px;">No dealer accounts registered.</td></tr>';
@@ -6128,7 +6157,7 @@ function renderDealersMaster() {
 
   if (select) {
     const selected = select.value || dealers[0]?.name || '';
-    select.innerHTML = dealers.map(d => `<option value="${d.name}" ${d.name === selected ? 'selected' : ''}>${d.name}</option>`).join('');
+    select.innerHTML = dealers.map(d => `<option value="${escapeHtml(d.name)}" ${d.name === selected ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('');
   }
 
   renderDealerStatement();
@@ -6149,15 +6178,15 @@ function renderSuppliers() {
 
       return `
         <tr>
-          <td><strong>${s.id}</strong></td>
-          <td><strong>${s.name}</strong></td>
-          <td>${s.contactPerson || '—'}</td>
-          <td><span style="font-family:monospace;font-weight:700;">${s.gstin || '—'}</span></td>
-          <td>${s.state || s.address || '—'}</td>
+          <td><strong>${escapeHtml(s.id)}</strong></td>
+          <td><strong>${escapeHtml(s.name)}</strong></td>
+          <td>${escapeHtml(s.contactPerson || '—')}</td>
+          <td><span style="font-family:monospace;font-weight:700;">${escapeHtml(s.gstin || '—')}</span></td>
+          <td>${escapeHtml(s.state || s.address || '—')}</td>
           <td>${badge(s.category || 'Supplier')}</td>
           <td><strong style="color:${netPayable > 0 ? '#dc2626' : '#16a34a'};">${formatINR(netPayable)}</strong></td>
           <td>
-            <button class="secondary-btn btn-view-supp-statement" data-supp="${s.name}" style="padding:4px 8px;font-size:11px;">View statement</button>
+            <button class="secondary-btn btn-view-supp-statement" data-supp="${escapeHtml(s.name)}" style="padding:4px 8px;font-size:11px;">View statement</button>
           </td>
         </tr>
       `;
@@ -6170,7 +6199,7 @@ function renderSuppliers() {
     const suppList = (state.suppliers || []).map(s => s.name);
     if (suppList.length === 0) suppList.push('EVE Energy Co., Ltd.', 'Daly Electronics Co.');
     const selectedSupp = currentVal || suppList[0];
-    select.innerHTML = suppList.map(name => `<option value="${name}" ${name === selectedSupp ? 'selected' : ''}>${name}</option>`).join('');
+    select.innerHTML = suppList.map(name => `<option value="${escapeHtml(name)}" ${name === selectedSupp ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
   }
 }
 
@@ -6199,14 +6228,14 @@ function renderSupplierStatement() {
 
     return `
       <tr>
-        <td>${entry.date}</td>
-        <td><strong>${entry.ref}</strong></td>
-        <td>${entry.desc}</td>
+        <td>${escapeHtml(entry.date)}</td>
+        <td><strong>${escapeHtml(entry.ref)}</strong></td>
+        <td>${escapeHtml(entry.desc)}</td>
         <td style="text-align:right;color:#2f855a;font-weight:700;">${debit ? formatINR(debit) : '—'}</td>
         <td style="text-align:right;color:#1e293b;">${credit ? formatINR(credit) : '—'}</td>
         <td style="text-align:right;font-weight:800;color:${runningBalance > 0 ? '#dc2626' : '#2f855a'};">${formatINR(runningBalance)}</td>
-        <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${bankAcc}</span></td>
-        <td>${entry.ref && (state.purchaseBills || []).some(b => b.billNo === entry.ref) ? `<button type="button" class="secondary-btn btn-print-purchase-bill" data-bill="${entry.ref}" style="padding:4px 8px;font-size:11px;">🖨️ Print bill</button>` : '—'}</td>
+        <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${escapeHtml(bankAcc)}</span></td>
+        <td>${entry.ref && (state.purchaseBills || []).some(b => b.billNo === entry.ref) ? `<button type="button" class="secondary-btn btn-print-purchase-bill" data-bill="${escapeHtml(entry.ref)}" style="padding:4px 8px;font-size:11px;">🖨️ Print bill</button>` : '—'}</td>
       </tr>
     `;
   }).join('');
@@ -6216,7 +6245,7 @@ function renderSupplierStatement() {
   if ($('#supp-net-balance')) $('#supp-net-balance').textContent = formatINR(runningBalance);
 
   if ($('#supplier-statement-table')) {
-    $('#supplier-statement-table').innerHTML = rows || `<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:18px;">No purchase ledger transactions found for ${selectedSuppName || 'this supplier'}.</td></tr>`;
+    $('#supplier-statement-table').innerHTML = rows || `<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:18px;">No purchase ledger transactions found for ${escapeHtml(selectedSuppName || 'this supplier')}.</td></tr>`;
   }
 }
 
@@ -6231,16 +6260,16 @@ function renderPurchaseBillHistory() {
     const balance = getPurchaseBillBalance(bill);
     const taxableValue = getPurchaseBillTaxableValue(bill);
     return `<tr>
-      <td><strong>${bill.billNo || '—'}</strong><br><small style="color:#64748b;">${(bill.items || []).length} item(s)</small></td>
-      <td>${bill.billDate || '—'}</td>
-      <td><strong>${bill.supplier || '—'}</strong><br><small style="font-family:monospace;color:#64748b;">${bill.vendorGstin || 'Unregistered'}</small></td>
+      <td><strong>${escapeHtml(bill.billNo || '—')}</strong><br><small style="color:#64748b;">${(bill.items || []).length} item(s)</small></td>
+      <td>${escapeHtml(bill.billDate || '—')}</td>
+      <td><strong>${escapeHtml(bill.supplier || '—')}</strong><br><small style="font-family:monospace;color:#64748b;">${escapeHtml(bill.vendorGstin || 'Unregistered')}</small></td>
       <td>${bill.taxMode === 'INTER' ? 'IGST' : 'CGST + SGST'}</td>
       <td style="text-align:right;">${formatINR(taxableValue)}</td>
       <td style="text-align:right;">${formatINR(totalGst)}</td>
       <td style="text-align:right;font-weight:800;">${formatINR(grandTotal)}</td>
       <td style="text-align:right;color:#2f855a;font-weight:700;">${formatINR(paid)}<br><small>${Number(bill.paymentPercent || (grandTotal ? paid / grandTotal * 100 : 0)).toFixed(2)}%</small></td>
       <td style="text-align:right;color:${balance > 0 ? '#c53030' : '#2f855a'};font-weight:800;">${formatINR(balance)}</td>
-      <td><button type="button" class="secondary-btn btn-print-purchase-bill" data-bill="${bill.billNo}" style="padding:5px 9px;font-size:11px;">🖨️ View / Print</button></td>
+      <td><button type="button" class="secondary-btn btn-print-purchase-bill" data-bill="${escapeHtml(bill.billNo)}" style="padding:5px 9px;font-size:11px;">🖨️ View / Print</button></td>
     </tr>`;
   }).join('') || '<tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:24px;">No purchase bills recorded yet. Use “Enter Purchase Bill” to create the first history record.</td></tr>';
 }
@@ -6251,11 +6280,11 @@ function renderVehicleModels() {
   if ($('#vehicle-models-table')) {
     $('#vehicle-models-table').innerHTML = (state.vehicleModels || []).map((vm, idx) => `
       <tr>
-        <td><strong>${vm.name}</strong></td>
+        <td><strong>${escapeHtml(vm.name)}</strong></td>
         <td>${categoryBadge(vm.type || 'E-Rickshaw')}</td>
-        <td>${vm.motor || '1200W BLDC'}</td>
-        <td>${vm.batterySpec || 'LFP 51.2V 100Ah'}</td>
-        <td><span style="font-family:monospace;font-weight:700;">${vm.hsn || '87116010'}</span></td>
+        <td>${escapeHtml(vm.motor || '1200W BLDC')}</td>
+        <td>${escapeHtml(vm.batterySpec || 'LFP 51.2V 100Ah')}</td>
+        <td><span style="font-family:monospace;font-weight:700;">${escapeHtml(vm.hsn || '87116010')}</span></td>
         <td><strong>${vm.gstRate ?? getConfiguredGstRate('Vehicle')}%</strong></td>
         <td><strong style="color:#2f855a;">${formatINR(vm.price)}</strong></td>
         <td>
@@ -6273,11 +6302,11 @@ function renderVehicles() {
 
   const vehicleRowsHtml = (state.vehicles || []).map((v, idx) => `
     <tr>
-      <td><strong style="font-family:monospace;color:#2b6cb0;">${v.chassisNo}</strong></td>
-      <td><strong>${v.model}</strong></td>
-      <td>${v.motorNo || '1200W BLDC'}</td>
-      <td><span style="font-family:monospace;">${v.batterySerial || 'LFP 51.2V 100Ah'}</span></td>
-      <td>${v.color || 'Standard'}</td>
+      <td><strong style="font-family:monospace;color:#2b6cb0;">${escapeHtml(v.chassisNo)}</strong></td>
+      <td><strong>${escapeHtml(v.model)}</strong></td>
+      <td>${escapeHtml(v.motorNo || '1200W BLDC')}</td>
+      <td><span style="font-family:monospace;">${escapeHtml(v.batterySerial || 'LFP 51.2V 100Ah')}</span></td>
+      <td>${escapeHtml(v.color || 'Standard')}</td>
       <td><strong style="color:#2f855a;">${formatINR(v.price)}</strong></td>
       <td>${badge(v.status || 'Available in Showroom')}</td>
       <td>
@@ -6294,14 +6323,14 @@ function renderVehicles() {
   if ($('#vehicle-sales-table')) {
     $('#vehicle-sales-table').innerHTML = (state.vehicleInvoices || []).map(vinv => `
       <tr>
-        <td><strong>${vinv.invoice}</strong></td>
-        <td><strong>${vinv.party}</strong><br><small style="color:#64748b;">${vinv.phone || ''}</small></td>
-        <td>${vinv.model}</td>
-        <td><span style="font-family:monospace;font-weight:700;color:#2b6cb0;">${vinv.chassisNo}</span></td>
-        <td><span style="font-family:monospace;">${vinv.motorNo || '—'}</span></td>
+        <td><strong>${escapeHtml(vinv.invoice)}</strong></td>
+        <td><strong>${escapeHtml(vinv.party)}</strong><br><small style="color:#64748b;">${escapeHtml(vinv.phone || '')}</small></td>
+        <td>${escapeHtml(vinv.model)}</td>
+        <td><span style="font-family:monospace;font-weight:700;color:#2b6cb0;">${escapeHtml(vinv.chassisNo)}</span></td>
+        <td><span style="font-family:monospace;">${escapeHtml(vinv.motorNo || '—')}</span></td>
         <td><strong style="color:#1e293b;">${formatINR(vinv.grandTotal)}</strong></td>
-        <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${vinv.bankAccount || 'HDFC Bank Current A/C'}</span></td>
-        <td>${vinv.date}</td>
+        <td><span style="font-size:11px;color:#4a5568;font-weight:600;">${escapeHtml(vinv.bankAccount || 'HDFC Bank Current A/C')}</span></td>
+        <td>${escapeHtml(vinv.date)}</td>
         <td>${badge('Sold & Dispatched')}</td>
       </tr>
     `).join('') || '<tr><td colspan="9" style="text-align:center;color:#a0aec0;padding:16px;">No EV vehicle sales recorded yet.</td></tr>';
@@ -6348,7 +6377,7 @@ function renderDealerStatement() {
   if ($('#dlr-stat-balance')) $('#dlr-stat-balance').textContent = formatINR(runningBalance);
   if ($('#dealer-statement-sub')) $('#dealer-statement-sub').textContent = `Debits ${formatINR(totalDebit)} · Credits ${formatINR(totalCredit)} · Balance ${formatINR(runningBalance)}`;
   if ($('#dealer-statement-table')) {
-    $('#dealer-statement-table').innerHTML = rows || `<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:18px;">No B2B ledger entries found for ${selectedDealer || 'this dealer'}.</td></tr>`;
+    $('#dealer-statement-table').innerHTML = rows || `<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:18px;">No B2B ledger entries found for ${escapeHtml(selectedDealer || 'this dealer')}.</td></tr>`;
   }
 }
 
@@ -6364,7 +6393,7 @@ function renderLedger() {
   if (partyList.length === 0) partyList.push('RANJEET KUMAR', 'Rahul EV Hub');
 
   let selectedParty = partySelect.value || partyList[0];
-  partySelect.innerHTML = partyList.map(p => `<option value="${p}" ${p === selectedParty ? 'selected' : ''}>${p}</option>`).join('');
+    partySelect.innerHTML = partyList.map(p => `<option value="${escapeHtml(p)}" ${p === selectedParty ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('');
   selectedParty = partySelect.value || partyList[0];
 
   const partyKey = normalizeText(selectedParty);
@@ -6403,7 +6432,7 @@ function renderLedger() {
   if ($('#ledger-sub-party')) $('#ledger-sub-party').textContent = `Total Debits: ₹${totalDebit.toFixed(2)} | Credits: ₹${totalCredit.toFixed(2)} | Balance: ₹${runningBalance.toFixed(2)}`;
 
   if ($('#ledger-statement-table')) {
-    $('#ledger-statement-table').innerHTML = statementRowsHtml || `<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:18px;">No ledger entries found for ${selectedParty}.</td></tr>`;
+  $('#ledger-statement-table').innerHTML = statementRowsHtml || `<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:18px;">No ledger entries found for ${escapeHtml(selectedParty)}.</td></tr>`;
   }
 }
 

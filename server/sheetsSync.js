@@ -1,4 +1,4 @@
-const { db, getAll } = require('./db');
+const { query, getAll } = require('./db');
 
 const TABLE_SHEET_MAP = {
     components: 'Raw Materials Catalog',
@@ -25,10 +25,26 @@ const TABLE_SHEET_MAP = {
  */
 async function syncAllTables() {
     const webhookUrl = process.env.GOOGLE_SHEETS_WEBHOOK_URL;
+    const syncSecret = process.env.GOOGLE_SHEETS_SYNC_SECRET || '';
     if (!webhookUrl) {
         console.error('Google Sheets webhook URL is missing.');
         return { success: false, error: 'No webhook URL configured' };
     }
+    if (!syncSecret) {
+        console.error('Google Sheets sync secret is missing.');
+        return { success: false, error: 'No sync secret configured' };
+    }
+
+    const writeSyncLog = async (tableName, recordCount, status, error, timestamp) => {
+        try {
+            await query(
+                'INSERT INTO sync_log (table_name, record_count, action, status, error, timestamp) VALUES ($1, $2, $3, $4, $5, $6)',
+                [tableName, recordCount, 'full_sync', status, error, timestamp]
+            );
+        } catch (logError) {
+            console.error(`Unable to write sync log for ${tableName}:`, logError);
+        }
+    };
     
     const results = [];
     for (const [table, sheetName] of Object.entries(TABLE_SHEET_MAP)) {
@@ -38,6 +54,7 @@ async function syncAllTables() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    secret: syncSecret,
                     sheetName,
                     entityType: table,
                     data: rows,
@@ -59,17 +76,13 @@ async function syncAllTables() {
                 timestamp 
             };
             
-            db.prepare(
-                'INSERT INTO sync_log (table_name, record_count, action, status, error, timestamp) VALUES (?, ?, ?, ?, ?, ?)'
-            ).run(table, rows.length, 'full_sync', 'success', null, timestamp);
+            await writeSyncLog(table, rows.length, 'success', null, timestamp);
             
             results.push(logEntry);
         } catch (err) {
             console.error(`Error syncing table ${table}:`, err);
             const timestamp = new Date().toISOString();
-            db.prepare(
-                'INSERT INTO sync_log (table_name, record_count, action, status, error, timestamp) VALUES (?, ?, ?, ?, ?, ?)'
-            ).run(table, 0, 'full_sync', 'failed', err.message, timestamp);
+            await writeSyncLog(table, 0, 'failed', err.message, timestamp);
             
             results.push({ 
                 table_name: table, 
@@ -81,7 +94,7 @@ async function syncAllTables() {
             });
         }
     }
-    return { success: true, results };
+    return { success: results.every(result => result.status === 'success'), results };
 }
 
 module.exports = { syncAllTables, TABLE_SHEET_MAP };

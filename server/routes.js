@@ -95,15 +95,18 @@ router.put('/api/invoices/:invoice', asyncRoute(async (req, res) => {
     const { items, ...invoice } = req.body || {};
     const settings = await getSystemSettings();
     const totals = items === undefined ? null : calculateSaleTax(items, invoice, settings);
-    if (totals) Object.assign(invoice, {
-        taxMode: totals.taxMode,
-        taxableValue: totals.taxableValue, totalGst: totals.totalGst,
-        cgstAmount: totals.cgstAmount, sgstAmount: totals.sgstAmount,
-        igstAmount: totals.igstAmount, cessAmount: totals.cessAmount,
-        grandTotal: totals.grandTotal,
-        paidAmount: assertPaymentAmount(totals.grandTotal, invoice.paidAmount),
-        balanceAmount: money(totals.grandTotal - Number(invoice.paidAmount || 0))
-    });
+    if (totals) {
+        const paidAmount = assertPaymentAmount(totals.grandTotal, invoice.paidAmount);
+        Object.assign(invoice, {
+            taxMode: totals.taxMode,
+            taxableValue: totals.taxableValue, totalGst: totals.totalGst,
+            cgstAmount: totals.cgstAmount, sgstAmount: totals.sgstAmount,
+            igstAmount: totals.igstAmount, cessAmount: totals.cessAmount,
+            grandTotal: totals.grandTotal,
+            paidAmount,
+            balanceAmount: money(totals.grandTotal - paidAmount)
+        });
+    }
     await withTransaction(async client => {
         await update('invoices', 'invoice', req.params.invoice, invoice, client);
         if (items !== undefined) {
@@ -113,7 +116,9 @@ router.put('/api/invoices/:invoice', asyncRoute(async (req, res) => {
     });
     res.json({ ...invoice, invoice: req.params.invoice, items: totals ? totals.items : [] });
 }));
-router.delete('/api/invoices/:invoice', asyncRoute(async (req, res) => { await remove('invoices', 'invoice', req.params.invoice); res.status(204).end(); }));
+router.delete('/api/invoices/:invoice', asyncRoute(async (req, res) => {
+    res.status(405).json({ error: 'Invoices cannot be deleted. Use the cancellation workflow to reverse business state.' });
+}));
 
 const stateTableMap = {
     components: 'components', inventory: 'inventory', production: 'production', dealers: 'dealers',
@@ -236,7 +241,7 @@ router.post('/api/operations/production', asyncRoute(async (req, res) => {
             const health = updateRow.remaining / (updateRow.total || 1) < 0.25 ? 'Low' : 'Good';
             await query('UPDATE inventory SET available = $1, health = $2 WHERE batch = $3', [formatAvailable(updateRow.remaining, updateRow.total), health, updateRow.inventory.batch], client);
         }
-        return { id, serial };
+        return { id, serial: null };
     });
     res.status(201).json({ success: true, ...result });
 }));
@@ -310,8 +315,9 @@ router.post('/api/operations/sale', asyncRoute(async (req, res) => {
             }
         }
         const ledgerId = `LEDG-${crypto.randomUUID()}`;
-        await insert('ledger', { id: ledgerId, date: calculatedInvoice.date, party: calculatedInvoice.party, partyType: calculatedInvoice.type, ref: calculatedInvoice.invoice, desc: `Tax Invoice ${calculatedInvoice.invoice} (${items.length} items)`, debit: calculatedInvoice.grandTotal, credit: 0, balance: calculatedInvoice.balanceAmount }, client);
-        if (Number(calculatedInvoice.paidAmount) > 0) await insert('ledger', { id: `LEDG-${crypto.randomUUID()}`, date: calculatedInvoice.date, party: calculatedInvoice.party, partyType: calculatedInvoice.type, ref: `PAY-${calculatedInvoice.invoice}`, desc: `Upfront Payment Received for ${calculatedInvoice.invoice}`, debit: 0, credit: calculatedInvoice.paidAmount, balance: calculatedInvoice.balanceAmount }, client);
+        const currentBalance = await partyBalance(calculatedInvoice.party, client);
+        await insert('ledger', { id: ledgerId, date: calculatedInvoice.date, party: calculatedInvoice.party, partyType: calculatedInvoice.type, ref: calculatedInvoice.invoice, desc: `Tax Invoice ${calculatedInvoice.invoice} (${items.length} items)`, debit: calculatedInvoice.grandTotal, credit: 0, balance: money(currentBalance + calculatedInvoice.grandTotal) }, client);
+        if (Number(calculatedInvoice.paidAmount) > 0) await insert('ledger', { id: `LEDG-${crypto.randomUUID()}`, date: calculatedInvoice.date, party: calculatedInvoice.party, partyType: calculatedInvoice.type, ref: `PAY-${calculatedInvoice.invoice}`, desc: `Upfront Payment Received for ${calculatedInvoice.invoice}`, debit: 0, credit: calculatedInvoice.paidAmount, balance: money(currentBalance + calculatedInvoice.grandTotal - calculatedInvoice.paidAmount) }, client);
     });
     res.status(201).json({ success: true, invoice: invoice.invoice });
 }));
@@ -556,7 +562,7 @@ router.post('/api/operations/claim', asyncRoute(async (req, res) => {
         await withTransaction(async client => {
             const existing = (await query('SELECT claim FROM claims WHERE claim = $1 FOR UPDATE', [data.claim], client)).rows[0];
             if (!existing) throw operationError(`Claim not found: ${data.claim}`, 404);
-            await query('UPDATE claims SET status=$1,outcome=$2,issue=$3,notes=$4,replaced_comp=$5,repair_labor=$6,repair_elec=$7 WHERE claim=$8', [data.status, data.outcome || 'Inspection', data.issue || '', data.notes || '', data.replacedComp || 'None', finiteNumber(data.repairLabor || 0, 'Repair labour', { min: 0 }), finiteNumber(data.repairElec || 0, 'Repair electricity', { min: 0 }), data.claim], [], client);
+            await query('UPDATE claims SET status=$1,outcome=$2,issue=$3,notes=$4,replaced_comp=$5,repair_labor=$6,repair_elec=$7 WHERE claim=$8', [data.status, data.outcome || 'Inspection', data.issue || '', data.notes || '', data.replacedComp || 'None', finiteNumber(data.repairLabor || 0, 'Repair labour', { min: 0 }), finiteNumber(data.repairElec || 0, 'Repair electricity', { min: 0 }), data.claim], client);
         });
         return res.json({ success: true, claim: data.claim });
     }
@@ -592,7 +598,7 @@ router.post('/api/operations/claim', asyncRoute(async (req, res) => {
             const currentBalance = await partyBalance(invoiceParty, client);
             await insert('ledger', { id: `LEDG-${crypto.randomUUID()}`, date: calculatedInvoice.date, party: invoiceParty, partyType: 'Customer', ref: calculatedInvoice.invoice, desc: `Repair Invoice ${calculatedInvoice.invoice}`, debit: calculatedInvoice.grandTotal, credit: 0, balance: money(currentBalance + calculatedInvoice.grandTotal) }, client);
             if (paidAmount > 0) await insert('ledger', { id: `LEDG-${crypto.randomUUID()}`, date: calculatedInvoice.date, party: invoiceParty, partyType: 'Customer', ref: `PAY-${calculatedInvoice.invoice}`, desc: `Repair Payment Received`, debit: 0, credit: paidAmount, balance: money(currentBalance + calculatedInvoice.grandTotal - paidAmount), bankAccount: calculatedInvoice.bankAccount }, client);
-            await query('UPDATE claims SET status=$1,outcome=$2,repair_invoice_no=$3,repair_labor=$4,repair_elec=$5,replaced_comp=$6,notes=$7 WHERE claim=$8', [status, outcome, calculatedInvoice.invoice, finiteNumber(data.repairLabor || 0, 'Repair labour', { min: 0 }), finiteNumber(data.repairElec || 0, 'Repair electricity', { min: 0 }), data.replacedComp || 'None', data.notes || '', claim], [], client);
+            await query('UPDATE claims SET status=$1,outcome=$2,repair_invoice_no=$3,repair_labor=$4,repair_elec=$5,replaced_comp=$6,notes=$7 WHERE claim=$8', [status, outcome, calculatedInvoice.invoice, finiteNumber(data.repairLabor || 0, 'Repair labour', { min: 0 }), finiteNumber(data.repairElec || 0, 'Repair electricity', { min: 0 }), data.replacedComp || 'None', data.notes || '', claim], client);
         });
         return res.status(201).json({ success: true, claim, invoice: invoice.invoice });
     }
