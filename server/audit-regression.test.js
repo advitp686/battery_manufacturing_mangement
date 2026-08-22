@@ -5,6 +5,7 @@ const path = require('node:path');
 const read = name => fs.readFileSync(path.join(__dirname, name), 'utf8');
 const routes = read('routes.js');
 const server = read('server.js');
+const db = read('db.js');
 const sheetsSync = read('sheetsSync.js');
 const testApi = read('test-api.js');
 const frontend = fs.readFileSync(path.join(__dirname, '..', 'web-preview', 'app.js'), 'utf8');
@@ -23,6 +24,8 @@ assert.match(sheetsSync, /GOOGLE_SHEETS_SYNC_SECRET/);
 assert.match(server, /STAFF_PASSWORD\.startsWith\('\$2'\)/);
 assert.match(server, /express\.json\(\{ limit: '1mb' \}\)/);
 assert.match(server, /app\.use\('\/api\/migrate', express\.json\(\{ limit: '50mb' \}\)\)/);
+assert.match(db, /rejectUnauthorized: true/);
+assert.doesNotMatch(db, /rejectUnauthorized: false/);
 
 assert.match(testApi, /sessionCookie/);
 assert.doesNotMatch(testApi, /const API_KEY/);

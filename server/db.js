@@ -9,7 +9,7 @@ const pool = new Pool({
     max: Number(process.env.DB_POOL_MAX || 10),
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : undefined
 });
 
 const TABLES = [
