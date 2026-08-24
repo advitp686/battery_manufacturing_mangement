@@ -328,10 +328,44 @@ const state = {
 let _serverOnline = false;
 let _syncDebounceTimer = null;
 let _lastServerState = null;
+let _currentUser = { username: '', role: '', label: '', permissions: [] };
+
+const VIEW_PERMISSIONS = {
+  dashboard: 'dashboard.read', models: 'models.read', inventory: 'inventory.read', production: 'production.read',
+  sales: 'sales.read', 'purchase-ledger': 'purchase.read', warranty: 'warranty.read', reports: 'reports.read',
+  lookup: 'lookup.read', settings: 'admin.settings'
+};
+
+const MODAL_PERMISSIONS = {
+  production: 'production.write', sale: 'sales.write', stock: 'inventory.write', supplier: 'suppliers.write',
+  'purchase-bill': 'purchase.write', 'supplier-pay': 'finance.write', component: 'components.write',
+  'edit-component': 'components.write', 'edit-comp-gst': 'components.write', model: 'models.write',
+  'edit-model': 'models.write', 'activate-warranty': 'warranty.write', claim: 'warranty.write',
+  'vehicle-sale': 'sales.write', 'vehicle-model': 'sales.write', 'vehicle-stock': 'inventory.write'
+};
+
+function applyAuthenticatedUser(payload) {
+  const user = payload?.user || payload || {};
+  _currentUser = {
+    username: String(user.username || ''),
+    role: String(user.role || 'SalesProcurement'),
+    label: String(user.label || user.role || 'Sales & Procurement'),
+    permissions: Array.isArray(payload?.permissions) ? payload.permissions : (Array.isArray(user.permissions) ? user.permissions : [])
+  };
+  updateUserRoleUI();
+}
+
+function currentUserHasPermission(permission) {
+  return _currentUser.role === 'Admin' || _currentUser.permissions.includes('*') || _currentUser.permissions.includes(permission);
+}
+
+function canAccessView(view) {
+  return currentUserHasPermission(VIEW_PERMISSIONS[view] || 'dashboard.read');
+}
 
 async function ensureAuthenticated() {
   const me = await fetch('/api/auth/me', { credentials: 'same-origin' }).then(r => r.json());
-  if (me.authenticated) { localStorage.setItem('tejas_user_role', me.user?.role || 'Staff'); return me; }
+  if (me.authenticated) { applyAuthenticatedUser(me); return me; }
 
   return new Promise(resolve => {
     const overlay = document.createElement('div');
@@ -346,7 +380,7 @@ async function ensureAuthenticated() {
       const response = await fetch('/api/auth/login', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(form)) });
       if (!response.ok) { overlay.querySelector('[data-error]').textContent = 'Invalid username or password.'; return; }
       const user = await response.json();
-      localStorage.setItem('tejas_user_role', user.role || 'Staff');
+      applyAuthenticatedUser(user);
       overlay.remove();
       resolve(user);
     });
@@ -1175,6 +1209,7 @@ async function refreshHostedState() {
 
 function render() {
   try {
+    updateUserRoleUI();
     // Live Dashboard KPI Stat Calculations
     const activeWarrantiesCount = (state.warranties || []).filter(w => w.status === 'Active').length;
     const finishedStockCount = (state.production || []).filter(p => (p.qc === 'Passed' || p.status === 'Saleable' || p.status === 'Dealer stock') && !(state.sales || []).some(s => s.pack === p.serial || s.pack === p.id)).length;
@@ -1982,6 +2017,38 @@ function populateSettingsUI() {
   if ($('#set-client-name')) $('#set-client-name').value = localStorage.getItem('tejas_client_account_name') || '';
 
   renderBankAccountsSettings();
+  renderAuthUsers();
+}
+
+async function renderAuthUsers() {
+  const table = $('#auth-users-table');
+  if (!table || !isUserAdmin()) return;
+  table.innerHTML = '<tr><td colspan="5" style="color:#64748b;">Loading user accounts…</td></tr>';
+  try {
+    const response = await fetch('/api/auth/users', { credentials: 'same-origin' });
+    if (!response.ok) throw new Error(`Unable to load users (${response.status})`);
+    const users = await response.json();
+    table.innerHTML = users.map(user => {
+      const self = user.username === _currentUser.username;
+      const role = user.role || 'SalesProcurement';
+      return `<tr>
+        <td><strong>${escapeHtml(user.username)}</strong>${self ? '<br><small style="color:#64748b;">Current account</small>' : ''}</td>
+        <td><select class="auth-user-role" data-username="${escapeHtml(user.username)}" ${self ? 'disabled' : ''}>
+          <option value="SalesProcurement" ${role === 'SalesProcurement' ? 'selected' : ''}>Sales &amp; Procurement</option>
+          <option value="BatteryOperator" ${role === 'BatteryOperator' ? 'selected' : ''}>Battery Operator</option>
+          <option value="Admin" ${role === 'Admin' ? 'selected' : ''}>Administrator</option>
+        </select></td>
+        <td><span class="badge ${user.active ? 'success' : 'fail'}">${user.active ? 'Active' : 'Inactive'}</span></td>
+        <td><input class="auth-user-password" data-username="${escapeHtml(user.username)}" type="password" minlength="10" placeholder="Leave unchanged" autocomplete="new-password" style="min-width:150px;" /></td>
+        <td style="white-space:nowrap;">
+          <button class="secondary-btn btn-save-auth-user" data-username="${escapeHtml(user.username)}" ${self ? 'disabled' : ''}>Save</button>
+          <button class="secondary-btn btn-toggle-auth-user" data-username="${escapeHtml(user.username)}" data-active="${user.active ? 'true' : 'false'}" ${self ? 'disabled' : ''}>${user.active ? 'Deactivate' : 'Reactivate'}</button>
+        </td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="5">No user accounts found.</td></tr>';
+  } catch (error) {
+    table.innerHTML = `<tr><td colspan="5" style="color:#c53030;">${escapeHtml(error.message)}</td></tr>`;
+  }
 }
 
 function showView(view) {
@@ -2876,18 +2943,17 @@ const modalSchemas = {
 };
 
 function getCurrentUserRole() {
-  return localStorage.getItem('tejas_user_role') || 'Staff';
-}
-
-function setUserRole(role) {
-  localStorage.setItem('tejas_user_role', role);
-  updateUserRoleUI();
-  try { render(); } catch (e) {}
+  return _currentUser.role || '';
 }
 
 function updateUserRoleUI() {
   const role = getCurrentUserRole();
   const isAdmin = role === 'Admin';
+  const roleMeta = {
+    Admin: { label: 'Administrator', avatar: 'ADM', icon: '👨‍💼' },
+    SalesProcurement: { label: 'Sales & Procurement', avatar: 'SP', icon: '🧾' },
+    BatteryOperator: { label: 'Battery Operator', avatar: 'BO', icon: '⚙️' }
+  }[role] || { label: _currentUser.label || 'Signed-in user', avatar: 'USR', icon: '👤' };
 
   const nameEl = $('#sidebar-username');
   const roleEl = $('#sidebar-userrole');
@@ -2896,21 +2962,32 @@ function updateUserRoleUI() {
   const switchBtnEl = $('#btn-switch-user-role');
   const resetBtnEl = $('#reset-app-btn');
 
-  if (nameEl) nameEl.textContent = isAdmin ? 'System Administrator' : 'Reception Staff';
-  if (roleEl) roleEl.textContent = isAdmin ? '👨‍💼 Administrator' : '👤 Reception Staff';
-  if (avatarEl) avatarEl.textContent = isAdmin ? 'ADM' : 'RS';
-  if (topAvatarEl) topAvatarEl.textContent = isAdmin ? 'ADM' : 'RS';
-  if (switchBtnEl) switchBtnEl.textContent = isAdmin ? '👨‍💼 Admin' : '👤 Reception Staff';
+  if (nameEl) nameEl.textContent = _currentUser.username || 'Signed-in user';
+  if (roleEl) roleEl.textContent = `${roleMeta.icon} ${roleMeta.label}`;
+  if (avatarEl) avatarEl.textContent = roleMeta.avatar;
+  if (topAvatarEl) topAvatarEl.textContent = roleMeta.avatar;
+  if (switchBtnEl) switchBtnEl.textContent = `👤 ${roleMeta.label}`;
 
   $$('.nav-item').forEach(item => {
-    const view = item.dataset.view;
-    if (view === 'settings') {
-      item.style.display = isAdmin ? 'flex' : 'none';
-    }
+    item.style.display = canAccessView(item.dataset.view) ? 'flex' : 'none';
   });
 
   if (resetBtnEl) {
     resetBtnEl.style.display = isAdmin ? 'inline-block' : 'none';
+  }
+
+  $$('.btn-delete-model, .btn-delete-production, .btn-delete-purchase-bill, .btn-delete-component').forEach(button => {
+    button.style.display = isAdmin ? '' : 'none';
+  });
+
+  $$('[data-modal]').forEach(button => {
+    const kind = String(button.dataset.modal || '').replace(/-modal$/, '');
+    const permission = MODAL_PERMISSIONS[kind];
+    if (permission) button.style.display = currentUserHasPermission(permission) ? '' : 'none';
+  });
+
+  if (!canAccessView(document.querySelector('.view.active')?.id?.replace(/^view-/, '') || 'dashboard')) {
+    showView('dashboard');
   }
 }
 
@@ -2918,74 +2995,29 @@ function openRoleModal() {
   const backdrop = $('#modal-backdrop');
   if (!backdrop) return;
 
-  const currentRole = getCurrentUserRole();
-
   const modalEl = $('.modal');
   if (modalEl) modalEl.style.width = 'min(540px, 95%)';
 
-  $('#modal-title').textContent = 'Switch User Profile / System Role';
+  $('#modal-title').textContent = 'Signed-in account';
   $('#modal-fields').innerHTML = `
     <div style="background:#f8fafc;padding:14px;border-radius:8px;border:1px solid #cbd5e1;margin-bottom:16px;">
-      <div style="font-size:12px;color:#64748b;">Current Active Profile:</div>
-      <div style="font-size:16px;font-weight:800;color:#1e293b;margin-top:2px;">
-        ${currentRole === 'Admin' ? '👨‍💼 Administrator (Full System Control)' : '👤 Reception Staff (Daily Sales & Warranty Ops)'}
-      </div>
+      <div style="font-size:12px;color:#64748b;">Username</div>
+      <div style="font-size:16px;font-weight:800;color:#1e293b;margin-top:2px;">${escapeHtml(_currentUser.username || 'Unknown')}</div>
+      <div style="font-size:12px;color:#475569;margin-top:8px;"><strong>Role:</strong> ${escapeHtml(_currentUser.label || getCurrentUserRole())}</div>
+      <div style="font-size:12px;color:#475569;margin-top:4px;"><strong>Permissions:</strong> ${_currentUser.role === 'Admin' ? 'Full system access' : `${_currentUser.permissions.length} assigned permissions`}</div>
     </div>
-
-    <div style="display:flex;flex-direction:column;gap:12px;">
-      <div style="background:#fff;border:2px solid ${currentRole === 'Admin' ? '#2b6cb0' : '#cbd5e1'};padding:14px;border-radius:10px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <div>
-            <strong style="font-size:14px;color:#1a202c;display:block;">👨‍💼 Administrator Profile</strong>
-            <small style="color:#64748b;font-size:11px;display:block;margin-top:2px;">Full unrestricted access to System Settings, BOM prices, Stock, Reports &amp; Reset Data.</small>
-          </div>
-          <button type="button" class="primary-btn btn-switch-role" data-role="Admin" style="padding:8px 14px;font-size:12px;background:#2b6cb0;">
-            ${currentRole === 'Admin' ? '● Active' : 'Switch to Admin 🔑'}
-          </button>
-        </div>
-        ${currentRole === 'Staff' ? `
-          <div style="margin-top:12px;padding-top:10px;border-top:1px solid #e2e8f0;">
-            <label style="font-size:11px;font-weight:800;color:#c05621;display:block;margin-bottom:4px;">🔑 ENTER ADMIN PASSWORD TO UNLOCK ADMINISTRATOR ROLE:</label>
-            <input type="password" id="role-admin-pass-input" placeholder="Administrator password" style="width:100%;padding:8px;font-size:13px;border:1px solid #cbd5e1;border-radius:6px;box-sizing:border-box;font-weight:700;" />
-          </div>
-        ` : ''}
-      </div>
-
-      <div style="background:#fff;border:2px solid ${currentRole === 'Staff' ? '#319795' : '#cbd5e1'};padding:14px;border-radius:10px;display:flex;justify-content:space-between;align-items:center;">
-        <div>
-          <strong style="font-size:14px;color:#1a202c;display:block;">👤 Reception Staff Profile</strong>
-          <small style="color:#64748b;font-size:11px;display:block;margin-top:2px;">Daily reception use: Record Sales, Customer Ledger, Warranty Registrations &amp; QR Labels.</small>
-        </div>
-        <button type="button" class="primary-btn btn-switch-role" data-role="Staff" style="padding:8px 14px;font-size:12px;background:#319795;">
-          ${currentRole === 'Staff' ? '● Active' : 'Lock to Staff'}
-        </button>
-      </div>
-    </div>
+    <p style="font-size:12px;color:#64748b;line-height:1.5;margin:0 0 14px;">Roles are assigned by an Administrator. To use another role, sign out and log in with that user’s account.</p>
+    <button type="button" class="primary-btn" id="btn-auth-logout" style="width:100%;background:#c53030;">Sign out</button>
   `;
 
   backdrop.removeAttribute('hidden');
   backdrop.style.display = 'flex';
   backdrop.style.alignItems = 'center';
   backdrop.style.justifyContent = 'center';
-  backdrop.dataset.kind = 'switch-role';
-
-  $$('.btn-switch-role').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const targetRole = btn.dataset.role;
-      if (targetRole === 'Admin' && currentRole !== 'Admin') {
-        const inputPass = ($('#role-admin-pass-input')?.value || '').trim();
-        if (!inputPass) { toast('❌ Administrator password is required.'); return; }
-        fetch('/api/auth/login', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: inputPass }) })
-          .then(response => { if (!response.ok) throw new Error('Invalid administrator password'); return response.json(); })
-          .then(user => { setUserRole(user.role || 'Admin'); closeModal(); toast('Switched to Administrator profile.'); })
-          .catch(() => toast('❌ Invalid Administrator Password. Access Denied.'));
-        return;
-      }
-      if (targetRole === 'Staff' && currentRole === 'Admin') { fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).finally(() => window.location.reload()); return; }
-      setUserRole(targetRole);
-      closeModal();
-      toast(`Switched profile to ${targetRole === 'Admin' ? '👨‍💼 Administrator (Full Access)' : '👤 Reception Staff (Restricted Access)'}`);
-    });
+  backdrop.dataset.kind = 'account-info';
+  $('#btn-auth-logout')?.addEventListener('click', async () => {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+    window.location.reload();
   });
 }
 
@@ -4955,9 +4987,8 @@ async function submitModal(e) {
   }
 
   if (kind === 'production') {
-    const currentRole = getCurrentUserRole();
-    if (!isUserAdmin() && !String(currentRole || '').toLowerCase().includes('operator') && !String(currentRole || '').toLowerCase().includes('quality')) {
-      toast('Access Denied: Creating production builds requires Administrator or Workshop Operator role.');
+    if (!currentUserHasPermission('production.write')) {
+      toast('Access Denied: Creating production builds requires Battery Operator or Administrator access.');
       closeModal();
       return;
     }
@@ -6782,9 +6813,8 @@ function bind() {
       e.preventDefault();
       const targetView = navBtn.dataset.view;
       if (targetView) {
-        const currentRole = getCurrentUserRole();
-        if (targetView === 'settings' && currentRole !== 'Admin') {
-          toast('🔒 System Settings are restricted to Administrator profile.');
+        if (!canAccessView(targetView)) {
+          toast('🔒 Your signed-in role does not have access to this area.');
           return;
         }
         showView(targetView);
@@ -6798,10 +6828,15 @@ function bind() {
       e.preventDefault();
       const a = actionBtn.dataset.action;
       if (a) {
+        const actionView = a === 'sale' ? 'sales' : a;
+        if (!canAccessView(actionView)) {
+          toast('🔒 Your signed-in role does not have access to this action.');
+          return;
+        }
         showView(a === 'sale' ? 'sales' : a);
-        if (a === 'production') openModal('production');
-        if (a === 'inventory') openModal('stock');
-        if (a === 'sale') openModal('sale');
+        if (a === 'production' && currentUserHasPermission('production.write')) openModal('production');
+        if (a === 'inventory' && currentUserHasPermission('inventory.write')) openModal('stock');
+        if (a === 'sale' && currentUserHasPermission('sales.write')) openModal('sale');
       }
       return;
     }
@@ -7092,6 +7127,11 @@ function bind() {
     if (modalBtn) {
       e.preventDefault();
       const kind = modalBtn.dataset.modal.replace('-modal', '');
+      const permission = MODAL_PERMISSIONS[kind];
+      if (permission && !currentUserHasPermission(permission)) {
+        toast('🔒 Your signed-in role cannot create or edit this record.');
+        return;
+      }
       if (kind === 'supplier') openSupplierModal();
       else openModal(kind);
       return;
@@ -7280,6 +7320,67 @@ function bind() {
       $('#set-admin-password').value = '';
     }
     toast('💾 Saved System Settings & Category Tax Rates successfully!');
+  });
+
+  $('#btn-create-auth-user')?.addEventListener('click', async () => {
+    const username = String($('#new-auth-username')?.value || '').trim().toLowerCase();
+    const role = $('#new-auth-role')?.value || 'SalesProcurement';
+    const password = String($('#new-auth-password')?.value || '');
+    const response = await fetch('/api/auth/users', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, role, password })
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      toast(`User was not created: ${error.error || response.status}`);
+      return;
+    }
+    $('#new-auth-username').value = '';
+    $('#new-auth-password').value = '';
+    await renderAuthUsers();
+    toast(`Created ${role === 'BatteryOperator' ? 'Battery Operator' : role === 'Admin' ? 'Administrator' : 'Sales & Procurement'} user.`);
+  });
+
+  document.addEventListener('click', async event => {
+    const saveButton = event.target.closest('.btn-save-auth-user');
+    if (saveButton) {
+      event.preventDefault();
+      const username = saveButton.dataset.username;
+      const roleSelect = $(`.auth-user-role[data-username="${CSS.escape(username)}"]`);
+      const passwordInput = $(`.auth-user-password[data-username="${CSS.escape(username)}"]`);
+      const payload = {};
+      if (username !== _currentUser.username) payload.role = roleSelect?.value;
+      if (passwordInput?.value) payload.password = passwordInput.value;
+      if (!Object.keys(payload).length) { toast('No user changes to save.'); return; }
+      const response = await fetch(`/api/auth/users/${encodeURIComponent(username)}`, {
+        method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        toast(`User was not updated: ${error.error || response.status}`);
+        return;
+      }
+      await renderAuthUsers();
+      toast(`Updated user ${username}.`);
+      return;
+    }
+
+    const toggleButton = event.target.closest('.btn-toggle-auth-user');
+    if (toggleButton) {
+      event.preventDefault();
+      const username = toggleButton.dataset.username;
+      const nextActive = toggleButton.dataset.active !== 'true';
+      const response = await fetch(`/api/auth/users/${encodeURIComponent(username)}`, {
+        method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: nextActive })
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        toast(`User status was not changed: ${error.error || response.status}`);
+        return;
+      }
+      await renderAuthUsers();
+      toast(`${username} is now ${nextActive ? 'active' : 'inactive'}.`);
+    }
   });
 
   $('#btn-open-cloud-wizard')?.addEventListener('click', openGoogleSheetsModal);

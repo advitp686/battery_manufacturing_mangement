@@ -43,7 +43,7 @@
       </nav>
       <div class="sidebar-bottom">
         <div class="sync-card"><div class="sync-dot" id="sidebar-sync-dot"></div><div><strong id="sidebar-sync-title">⚡ PostgreSQL Connected</strong><span id="sidebar-sync-sub">Server database active</span></div></div>
-        <div class="profile" id="sidebar-profile-card" style="cursor:pointer;" title="Click to switch profile"><div class="avatar" id="sidebar-avatar">ADM</div><div><strong id="sidebar-username">System Administrator</strong><span id="sidebar-userrole">👨‍💼 Administrator</span></div><button class="ghost-icon" aria-label="Account menu">•••</button></div>
+        <div class="profile" id="sidebar-profile-card" style="cursor:pointer;" title="Open account menu"><div class="avatar" id="sidebar-avatar">USR</div><div><strong id="sidebar-username">Signed-in user</strong><span id="sidebar-userrole">👤 Account</span></div><button class="ghost-icon" aria-label="Account menu">•••</button></div>
       </div>
     </aside>
 
@@ -54,11 +54,11 @@
           <div class="sync-state" id="cloud-sync-status-bar" style="cursor:pointer;" title="Click to configure Google Sheets sync">
             <span class="status-dot neutral"></span> <strong id="cloud-status-text">Google Sheets not configured</strong>
           </div>
-          <button class="secondary-btn" id="btn-switch-user-role" style="padding:4px 10px;font-size:11px;background:#edf2f7;color:#2b6cb0;font-weight:700;">👤 Switch User Profile</button>
+          <button class="secondary-btn" id="btn-switch-user-role" style="padding:4px 10px;font-size:11px;background:#edf2f7;color:#2b6cb0;font-weight:700;">👤 Account</button>
           <button class="secondary-btn" id="btn-sync-sheets" style="padding:4px 10px;font-size:11px;background:#2b6cb0;color:#fff;">☁ Sync Sheets</button>
           <button class="secondary-btn" id="reset-app-btn" style="padding:4px 10px;font-size:11px;background:#fff1f0;color:#c53030;border:1px solid #ffa39e;">🔄 Reset App Data</button>
           <button class="icon-button" id="help-btn" aria-label="Help">?</button>
-          <button class="avatar mini" id="topbar-avatar" title="Click to switch profile">ADM</button>
+          <button class="avatar mini" id="topbar-avatar" title="Open account menu">USR</button>
         </div>
       </header>
 
@@ -1107,6 +1107,7 @@
             <button class="tab" data-tab="settings-banks-tab">💳 Bank Accounts &amp; Payment Modes (<span id="bank-count-badge">0</span>)</button>
             <button class="tab" data-tab="settings-cloud-tab">☁ Client Google Sheets Sync</button>
             <button class="tab" data-tab="settings-tax-tab">🏷️ Tax &amp; Warranty Policy Rules</button>
+            <button class="tab" data-tab="settings-users-tab">👥 User Accounts</button>
             <button class="tab" data-tab="settings-backup-tab">💾 Backup, Restore &amp; Data Tools</button>
           </div>
 
@@ -1197,7 +1198,25 @@
             </div>
           </article>
 
-          <!-- Settings Tab 4: Backup, Restore & Database Storage Tools -->
+          <!-- Settings Tab 4: Role-based User Accounts -->
+          <article class="panel tab-content" id="settings-users-tab" style="padding:22px;">
+            <h2 style="font-size:16px;margin-bottom:6px;color:#1e293b;">Role-based User Accounts</h2>
+            <p style="font-size:12px;color:#64748b;margin-bottom:16px;">Create individual logins. Permissions are enforced by the hosted server, so users cannot unlock another role from the browser.</p>
+            <div style="display:grid;grid-template-columns:1.1fr 1fr 1.2fr auto;gap:10px;align-items:end;background:#f8fafc;padding:14px;border:1px solid #cbd5e1;border-radius:8px;margin-bottom:18px;">
+              <div class="field"><label style="font-weight:700;">Username</label><input id="new-auth-username" placeholder="e.g. sales.team" autocomplete="off" /></div>
+              <div class="field"><label style="font-weight:700;">Role</label><select id="new-auth-role"><option value="SalesProcurement">Sales &amp; Procurement</option><option value="BatteryOperator">Battery Operator</option><option value="Admin">Administrator</option></select></div>
+              <div class="field"><label style="font-weight:700;">Temporary password</label><input id="new-auth-password" type="password" minlength="10" placeholder="At least 10 characters" autocomplete="new-password" /></div>
+              <button class="primary-btn" id="btn-create-auth-user" type="button" style="height:38px;">＋ Create User</button>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>New password (optional)</th><th>Actions</th></tr></thead>
+                <tbody id="auth-users-table"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <!-- Settings Tab 5: Backup, Restore & Database Storage Tools -->
           <article class="panel tab-content" id="settings-backup-tab" style="padding:22px;">
             <h2 style="font-size:16px;margin-bottom:6px;color:#1e293b;">Database Engine, Backup &amp; System Restore</h2>
             <p style="font-size:12px;color:#64748b;margin-bottom:18px;">Structured persistent storage metrics, automatic JSON disk backups, and cloud synchronization status.</p>

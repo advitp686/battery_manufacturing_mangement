@@ -16,7 +16,7 @@ const TABLES = [
     'components', 'models', 'model_bom', 'inventory', 'production', 'dealers', 'sales',
     'invoices', 'invoice_items', 'ledger', 'warranties', 'claims', 'suppliers',
     'supplier_ledger', 'purchase_bills', 'purchase_bill_items', 'vehicle_models',
-    'vehicles', 'vehicle_invoices', 'bank_accounts', 'system_settings', 'sync_log', 'auth_users'
+    'vehicles', 'vehicle_invoices', 'bank_accounts', 'system_settings', 'sync_log', 'auth_users', 'audit_log'
 ];
 
 async function initDatabase() {
@@ -149,6 +149,10 @@ async function initDatabase() {
         CREATE TABLE IF NOT EXISTS auth_users (
             username TEXT PRIMARY KEY, role TEXT NOT NULL, password_hash TEXT NOT NULL,
             active BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id BIGSERIAL PRIMARY KEY, username TEXT, role TEXT, action TEXT NOT NULL,
+            target TEXT, details TEXT, ip TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_no ON invoice_items(invoice_no)`);

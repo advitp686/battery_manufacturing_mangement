@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const router = express.Router();
 const { query, getAll, getById, insert, update, remove, withTransaction, getTotalRecords, keysToCamel, TABLES } = require('./db');
+const { ROLES, normalizeRole, writableTablesForRole } = require('./access');
 
 const asyncRoute = handler => (req, res) => Promise.resolve(handler(req, res)).catch(error => {
     console.error('API error:', error);
@@ -188,8 +189,28 @@ const stateTableMap = {
 };
 const allDataTables = ['invoice_items', 'model_bom', 'purchase_bill_items', ...Object.values(stateTableMap), 'invoices', 'models'];
 
-async function replaceState(state, client, { full = true } = {}) {
-    const writable = full ? new Set(allDataTables) : new Set(['sales', 'ledger', 'warranties', 'claims', 'invoices', 'invoice_items']);
+const syncPrimaryKeys = {
+    components: ['components', 'id', 'id'], inventory: ['inventory', 'batch', 'batch'], production: ['production', 'id', 'id'],
+    dealers: ['dealers', 'id', 'id'], sales: ['sales', 'id', 'id'], ledger: ['ledger', 'id', 'id'], warranties: ['warranties', 'pack', 'pack'],
+    claims: ['claims', 'claim', 'claim'], suppliers: ['suppliers', 'id', 'id'], supplierLedger: ['supplier_ledger', 'id', 'id'],
+    purchaseBills: ['purchase_bills', 'id', 'id'], vehicles: ['vehicles', 'chassis_no', 'chassisNo'], vehicleInvoices: ['vehicle_invoices', 'invoice', 'invoice'],
+    models: ['models', 'code', 'code'], invoices: ['invoices', 'invoice', 'invoice']
+};
+
+async function assertNoNonAdminSyncDeletes(state, client, writable) {
+    for (const [stateKey, [table, column, incomingKey]] of Object.entries(syncPrimaryKeys)) {
+        if (!writable.has(table) || state[stateKey] === undefined) continue;
+        if (!Array.isArray(state[stateKey])) throw badRequest(`${stateKey} must be an array`);
+        const incoming = new Set(state[stateKey].map(row => String(row[incomingKey] ?? '')).filter(Boolean));
+        const existing = (await query(`SELECT "${column}" FROM "${table}"`, [], client)).rows;
+        const removed = existing.map(row => String(row[column] ?? '')).filter(value => value && !incoming.has(value));
+        if (removed.length) throw operationError(`This role cannot delete existing ${stateKey} record(s). Use an Administrator account for deletions.`, 403);
+    }
+}
+
+async function replaceState(state, client, { full = true, writableTables } = {}) {
+    const writable = full ? new Set(allDataTables) : new Set(writableTables || ['sales', 'ledger', 'warranties', 'claims', 'invoices', 'invoice_items']);
+    if (!full) await assertNoNonAdminSyncDeletes(state, client, writable);
     for (const table of [...new Set(allDataTables)]) if (writable.has(table)) await query(`DELETE FROM "${table}"`, [], client);
     for (const [key, table] of Object.entries(stateTableMap)) {
         if (!writable.has(table)) continue;
@@ -207,7 +228,7 @@ async function replaceState(state, client, { full = true } = {}) {
             }
         }
     }
-    if (full && state.models !== undefined) {
+    if ((full || writable.has('models')) && state.models !== undefined) {
         if (!Array.isArray(state.models)) throw badRequest('models must be an array');
         for (const row of state.models) {
             const { bom = [], ...model } = row;
@@ -242,7 +263,8 @@ router.post('/api/sync-state', asyncRoute(async (req, res) => {
         if ((expected === undefined && current > 0) || (expected !== undefined && Number(expected) !== current)) {
             const error = new Error('State has changed on the server; reload before saving again'); error.statusCode = 409; error.currentVersion = current; throw error;
         }
-        await replaceState(req.body, client, { full: req.session.user?.role === 'Admin' });
+        const role = normalizeRole(req.session.user?.role);
+        await replaceState(req.body, client, { full: role === ROLES.ADMIN, writableTables: writableTablesForRole(role) });
         const next = current + 1;
         await query("INSERT INTO app_meta(key,value) VALUES ('state_version',$1) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value", [String(next)], client);
         return next;
