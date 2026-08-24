@@ -120,6 +120,66 @@ router.delete('/api/invoices/:invoice', asyncRoute(async (req, res) => {
     res.status(405).json({ error: 'Invoices cannot be deleted. Use the cancellation workflow to reverse business state.' });
 }));
 
+router.delete('/api/purchase-bills/:id', asyncRoute(async (req, res) => {
+    const result = await withTransaction(async client => {
+        const bill = (await query('SELECT * FROM purchase_bills WHERE id = $1 FOR UPDATE', [req.params.id], client)).rows[0];
+        if (!bill) throw operationError(`Purchase bill not found: ${req.params.id}`, 404);
+
+        // Bill number is currently the foreign key stored on inventory, vehicles, and
+        // supplier-ledger rows. Refuse ambiguous numbers so one delete cannot affect
+        // records belonging to another bill.
+        const billNumberCount = Number((await query('SELECT COUNT(*)::int AS count FROM purchase_bills WHERE bill_no = $1', [bill.bill_no], client)).rows[0].count);
+        if (billNumberCount !== 1) throw operationError(`Purchase bill ${bill.bill_no} cannot be deleted because its bill number is duplicated.`, 409);
+
+        const inventoryRows = (await query('SELECT * FROM inventory WHERE bill_no = $1 FOR UPDATE', [bill.bill_no], client)).rows;
+        const usedInventoryRows = inventoryRows.filter(row => {
+            const availability = parseInventoryAvailabilityForDelete(row.available);
+            return !availability || availability.available < availability.total;
+        });
+        if (usedInventoryRows.length) {
+            throw operationError(`Purchase bill ${bill.bill_no} cannot be deleted: ${usedInventoryRows.length} linked stock batch(es) were already used or have an unknown stock balance.`, 409);
+        }
+
+        const vehicleRows = (await query('SELECT * FROM vehicles WHERE purchase_bill_no = $1 FOR UPDATE', [bill.bill_no], client)).rows;
+        if (vehicleRows.length) {
+            const chassisNumbers = vehicleRows.map(row => row.chassis_no).filter(Boolean);
+            const invoicedChassis = chassisNumbers.length
+                ? (await query('SELECT chassis_no FROM vehicle_invoices WHERE chassis_no = ANY($1::text[])', [chassisNumbers], client)).rows.map(row => row.chassis_no)
+                : [];
+            const invoicedSet = new Set(invoicedChassis);
+            const usedVehicles = vehicleRows.filter(row => row.status !== 'Available in Showroom' || invoicedSet.has(row.chassis_no));
+            if (usedVehicles.length) {
+                throw operationError(`Purchase bill ${bill.bill_no} cannot be deleted: ${usedVehicles.length} linked vehicle(s) were already sold, dispatched, or invoiced.`, 409);
+            }
+        }
+
+        const ledgerRows = (await query(
+            'SELECT * FROM supplier_ledger WHERE supplier = $1 AND ref IN ($2, $3) FOR UPDATE',
+            [bill.supplier, bill.bill_no, `PAY-${bill.bill_no}`],
+            client
+        )).rows;
+        const paymentRows = ledgerRows.filter(row => row.ref === `PAY-${bill.bill_no}` || (row.ref === bill.bill_no && Number(row.debit || 0) > 0));
+        if (Number(bill.paid_amount || 0) > 0 || String(bill.payment_status || '').toLowerCase() === 'paid' || paymentRows.length) {
+            throw operationError(`Purchase bill ${bill.bill_no} cannot be deleted because a supplier payment is recorded. Reverse or remove the payment first.`, 409);
+        }
+        const billLedgerRows = ledgerRows.filter(row => row.ref === bill.bill_no);
+        if (billLedgerRows.length > 1) {
+            throw operationError(`Purchase bill ${bill.bill_no} cannot be deleted because its supplier-ledger posting is duplicated.`, 409);
+        }
+
+        await query('DELETE FROM inventory WHERE bill_no = $1', [bill.bill_no], client);
+        await query('DELETE FROM vehicles WHERE purchase_bill_no = $1', [bill.bill_no], client);
+        await query('DELETE FROM supplier_ledger WHERE supplier = $1 AND ref = $2', [bill.supplier, bill.bill_no], client);
+        await query('DELETE FROM purchase_bills WHERE id = $1', [bill.id], client);
+
+        const currentVersion = Number((await query("SELECT value FROM app_meta WHERE key = 'state_version'", [], client)).rows[0]?.value || 0);
+        const nextVersion = currentVersion + 1;
+        await query("INSERT INTO app_meta(key,value) VALUES ('state_version',$1) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value", [String(nextVersion)], client);
+        return { billId: bill.id, billNo: bill.bill_no, version: nextVersion };
+    });
+    res.json({ success: true, ...result });
+}));
+
 const stateTableMap = {
     components: 'components', inventory: 'inventory', production: 'production', dealers: 'dealers',
     sales: 'sales', ledger: 'ledger', warranties: 'warranties', claims: 'claims', suppliers: 'suppliers',
@@ -201,6 +261,11 @@ router.post('/api/reset', asyncRoute(async (req, res) => {
 function parseAvailable(value) {
     const parts = String(value || '').split('/').map(part => Number(String(part).replace(/,/g, '').trim()));
     return { available: Number.isFinite(parts[0]) ? parts[0] : 0, total: Number.isFinite(parts[1]) ? parts[1] : parts[0] || 0 };
+}
+function parseInventoryAvailabilityForDelete(value) {
+    const parts = String(value ?? '').split('/').map(part => Number(String(part).replace(/,/g, '').trim()));
+    if (parts.length !== 2 || parts.some(part => !Number.isFinite(part)) || parts[0] < 0 || parts[1] <= 0 || parts[0] > parts[1]) return null;
+    return { available: parts[0], total: parts[1] };
 }
 function formatAvailable(available, total) { return `${available.toLocaleString()} / ${total.toLocaleString()}`; }
 function operationError(message, statusCode = 409) { return Object.assign(new Error(message), { statusCode }); }

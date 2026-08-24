@@ -2278,6 +2278,101 @@ async function deleteProductionRecord(productionIdx) {
   toast(`Deleted ${production.id} from PostgreSQL and local cache.`);
 }
 
+function parseInventoryAvailabilityForDelete(value) {
+  const parts = String(value ?? '').split('/').map(part => Number(String(part).replace(/,/g, '').trim()));
+  if (parts.length !== 2 || parts.some(part => !Number.isFinite(part)) || parts[0] < 0 || parts[1] <= 0 || parts[0] > parts[1]) return null;
+  return { available: parts[0], total: parts[1] };
+}
+
+function getPurchaseBillDeleteDependencies(bill) {
+  const billNo = String(bill?.billNo || '').trim();
+  const supplierKey = normalizeText(bill?.supplier);
+  const linkedInventory = (state.inventory || []).filter(item => String(item.billNo || '').trim() === billNo);
+  const usedInventory = linkedInventory.filter(item => {
+    const availability = parseInventoryAvailabilityForDelete(item.available);
+    return !availability || availability.available < availability.total;
+  });
+
+  const linkedVehicles = (state.vehicles || []).filter(vehicle => String(vehicle.purchaseBillNo || '').trim() === billNo);
+  const invoicedChassis = new Set((state.vehicleInvoices || []).map(invoice => String(invoice.chassisNo || '').trim()).filter(Boolean));
+  const usedVehicles = linkedVehicles.filter(vehicle => vehicle.status !== 'Available in Showroom' || invoicedChassis.has(String(vehicle.chassisNo || '').trim()));
+
+  const linkedLedger = (state.supplierLedger || []).filter(entry =>
+    normalizeText(entry.supplier) === supplierKey && [billNo, `PAY-${billNo}`].includes(String(entry.ref || '').trim())
+  );
+  const paymentLedger = linkedLedger.filter(entry =>
+    String(entry.ref || '').trim() === `PAY-${billNo}` || (String(entry.ref || '').trim() === billNo && Number(entry.debit || 0) > 0)
+  );
+  const billPostings = linkedLedger.filter(entry => String(entry.ref || '').trim() === billNo);
+
+  const reasons = [];
+  if (usedInventory.length) reasons.push(`${usedInventory.length} linked stock batch(es) have already been used or have an unknown stock balance`);
+  if (usedVehicles.length) reasons.push(`${usedVehicles.length} linked vehicle(s) have already been sold, dispatched, or invoiced`);
+  if (Number(bill?.paidAmount || 0) > 0 || String(bill?.paymentStatus || '').toLowerCase() === 'paid' || paymentLedger.length) {
+    reasons.push('a supplier payment is recorded');
+  }
+  if (billPostings.length > 1) reasons.push('its supplier-ledger posting is duplicated');
+  return { billNo, supplierKey, linkedInventory, linkedVehicles, paymentLedger, billPostings, reasons };
+}
+
+async function deletePurchaseBill(billId) {
+  if (!isUserAdmin()) {
+    toast('Access Denied: Purchase bill deletion requires Administrator role.');
+    return;
+  }
+
+  const bill = (state.purchaseBills || []).find(item => String(item.id) === String(billId));
+  if (!bill) return;
+
+  const dependencies = getPurchaseBillDeleteDependencies(bill);
+  if (dependencies.reasons.length) {
+    toast(`Cannot delete ${bill.billNo}: ${dependencies.reasons.join('; ')}. Resolve them first.`);
+    return;
+  }
+
+  if (!confirm(`Delete purchase bill ${bill.billNo}?
+
+This will remove the bill, its unused stock/vehicles, and its unpaid supplier-ledger posting. This cannot be undone.`)) return;
+
+  if (_serverOnline) {
+    try {
+      const response = await fetch(`/api/purchase-bills/${encodeURIComponent(bill.id)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin'
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        toast(`Cannot delete ${bill.billNo}: ${error.error || `Server returned ${response.status}`}`);
+        return;
+      }
+      await refreshHostedState();
+      syncToGoogleSheets(false);
+      toast(`Deleted purchase bill ${bill.billNo} and its unused stock records.`);
+    } catch (error) {
+      toast(`Purchase bill ${bill.billNo} was not deleted because the hosted database could not be reached.`);
+    }
+    return;
+  }
+
+  const previousState = JSON.stringify(state);
+  state.purchaseBills = (state.purchaseBills || []).filter(item => String(item.id) !== String(bill.id));
+  state.inventory = (state.inventory || []).filter(item => String(item.billNo || '').trim() !== dependencies.billNo);
+  state.vehicles = (state.vehicles || []).filter(vehicle => String(vehicle.purchaseBillNo || '').trim() !== dependencies.billNo);
+  state.supplierLedger = (state.supplierLedger || []).filter(entry => !(
+    normalizeText(entry.supplier) === dependencies.supplierKey && String(entry.ref || '').trim() === dependencies.billNo
+  ));
+
+  const persistence = await saveState({ immediate: true });
+  if (!persistence.ok && !persistence.localOnly) {
+    restoreStateSnapshot(previousState);
+    render();
+    toast(`Purchase bill ${bill.billNo} was not deleted from the hosted database.`);
+    return;
+  }
+  render();
+  toast(`Deleted purchase bill ${bill.billNo} from local cache.`);
+}
+
 function issueReplacementModal(claimIdx) {
   const claim = state.claims[claimIdx];
   if (!claim) return;
@@ -6269,7 +6364,7 @@ function renderPurchaseBillHistory() {
       <td style="text-align:right;font-weight:800;">${formatINR(grandTotal)}</td>
       <td style="text-align:right;color:#2f855a;font-weight:700;">${formatINR(paid)}<br><small>${Number(bill.paymentPercent || (grandTotal ? paid / grandTotal * 100 : 0)).toFixed(2)}%</small></td>
       <td style="text-align:right;color:${balance > 0 ? '#c53030' : '#2f855a'};font-weight:800;">${formatINR(balance)}</td>
-      <td><button type="button" class="secondary-btn btn-print-purchase-bill" data-bill="${escapeHtml(bill.billNo)}" style="padding:5px 9px;font-size:11px;">🖨️ View / Print</button></td>
+      <td style="white-space:nowrap;"><button type="button" class="secondary-btn btn-print-purchase-bill" data-bill="${escapeHtml(bill.billNo)}" style="padding:5px 9px;font-size:11px;">🖨️ View / Print</button> <button type="button" class="secondary-btn btn-delete-purchase-bill" data-bill-id="${escapeHtml(bill.id)}" title="Deletes only when linked stock is unused and no supplier payment exists" style="padding:5px 9px;font-size:11px;color:#b91c1c;border-color:#fecaca;background:#fff5f5;">Delete</button></td>
     </tr>`;
   }).join('') || '<tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:24px;">No purchase bills recorded yet. Use “Enter Purchase Bill” to create the first history record.</td></tr>';
 }
@@ -6769,6 +6864,13 @@ function bind() {
     if (printPurchaseBtn) {
       e.preventDefault();
       printPurchaseBill(printPurchaseBtn.dataset.bill);
+      return;
+    }
+
+    const deletePurchaseBtn = e.target.closest('.btn-delete-purchase-bill');
+    if (deletePurchaseBtn) {
+      e.preventDefault();
+      deletePurchaseBill(deletePurchaseBtn.dataset.billId);
       return;
     }
 
