@@ -588,10 +588,23 @@ const DEFAULT_SYSTEM_SETTINGS = {
 function getSystemSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(SYSTEM_SETTINGS_KEY) || '{}');
-    return { ...DEFAULT_SYSTEM_SETTINGS, ...saved };
+    const hosted = state.settings && typeof state.settings === 'object' ? state.settings : {};
+    return { ...DEFAULT_SYSTEM_SETTINGS, ...hosted, ...saved };
   } catch {
-    return { ...DEFAULT_SYSTEM_SETTINGS };
+    const hosted = state.settings && typeof state.settings === 'object' ? state.settings : {};
+    return { ...DEFAULT_SYSTEM_SETTINGS, ...hosted };
   }
+}
+
+function applyHostedSettings(serverSettings) {
+  if (!serverSettings || typeof serverSettings !== 'object' || Array.isArray(serverSettings)) return;
+  // An empty settings table is valid for a new database, but must not erase
+  // company details already entered in this browser. Merge hosted values only
+  // when they actually exist, then keep one normalized copy for invoices.
+  if (Object.keys(serverSettings).length === 0) return;
+  const merged = { ...getSystemSettings(), ...serverSettings };
+  state.settings = merged;
+  localStorage.setItem(SYSTEM_SETTINGS_KEY, JSON.stringify(merged));
 }
 
 function getCompanyJurisdiction() {
@@ -1146,6 +1159,7 @@ function loadState() {
       // Count server records
       let serverRecs = 0;
       Object.values(serverState).forEach(v => { if (Array.isArray(v)) serverRecs += v.length; });
+      applyHostedSettings(serverState.settings);
 
       if (serverRecs > 0) {
         // Server has data — use it as authoritative source
@@ -1155,7 +1169,6 @@ function loadState() {
           }
         });
         if (serverState._syncVersion !== undefined) state._syncVersion = serverState._syncVersion;
-        if (serverState.settings && typeof serverState.settings === 'object') localStorage.setItem(SYSTEM_SETTINGS_KEY, JSON.stringify(serverState.settings));
         // Cache to IndexedDB for offline fallback
         saveStateToDB(state);
         console.log(`[Postgres] Loaded ${serverRecs} records from server`);
@@ -1201,7 +1214,7 @@ async function refreshHostedState() {
     if (Array.isArray(serverState[key])) state[key] = serverState[key];
   });
   if (serverState._syncVersion !== undefined) state._syncVersion = serverState._syncVersion;
-  if (serverState.settings && typeof serverState.settings === 'object') localStorage.setItem(SYSTEM_SETTINGS_KEY, JSON.stringify(serverState.settings));
+  applyHostedSettings(serverState.settings);
   localStorage.setItem('voltforge_state_v3', JSON.stringify(state));
   saveStateToDB(state);
   _lastServerState = JSON.stringify(state);
@@ -1925,7 +1938,10 @@ function openOpeningBalanceModal(preferredParty = '') {
 }
 
 function getCompanyBankAccounts() {
-  const customBankAccs = (state.bankAccounts || []).map(b => `${b.bankName} — ${b.accType} (${b.accNo})`);
+  const customBankAccs = (state.bankAccounts || [])
+    .filter(b => b && b.bankName && b.accNo)
+    .sort((a, b) => Number(Boolean(b.isPrimary)) - Number(Boolean(a.isPrimary)))
+    .map(b => `${b.bankName} — ${b.accType} (${b.accNo})`);
   if (customBankAccs.length === 0) {
     customBankAccs.push(
       'HDFC Bank — Current A/C (50200012345678)',
@@ -1935,6 +1951,12 @@ function getCompanyBankAccounts() {
   }
   customBankAccs.push('UPI / PhonePe / GPay', 'Cash in Hand', 'Cheque / Demand Draft');
   return customBankAccs;
+}
+
+function getPrimaryBankAccount() {
+  const primary = (state.bankAccounts || []).find(b => b && b.isPrimary && b.bankName && b.accNo)
+    || (state.bankAccounts || []).find(b => b && b.bankName && b.accNo);
+  return primary ? `${primary.bankName} — ${primary.accType} (${primary.accNo})` : getCompanyBankAccounts()[0];
 }
 
 function getBankOptionsHtml(selectedVal = '') {
@@ -3583,7 +3605,7 @@ function openModal(kind) {
     $('#modal-title').textContent = 'Enter Purchase Bill (Multi-Item)';
     $('.modal').style.width = 'min(980px, 96vw)';
     const vehicleEntry = `<div class="vehicle-purchase-entry" style="border-top:1px solid #f6ad55;padding-top:10px;margin-top:10px;"><div class="form-grid"><div class="field"><label>Model number *</label><input name="vehicle_model_no[]" required></div><div class="field"><label>Chassis number *</label><input name="vehicle_chassis_no[]" required></div><div class="field"><label>Motor number *</label><input name="vehicle_motor_no[]" required></div><div class="field"><label>Controller number</label><input name="vehicle_controller_no[]"></div><div class="field"><label>Battery number</label><input name="vehicle_battery_no[]"></div><div class="field"><label>Vehicle color</label><input name="vehicle_color[]"></div><div class="field"><label>Vehicle price (₹) *</label><input name="vehicle_price[]" type="number" min="0" step="0.01" value="0" required></div><div class="field"><label>Other charges (₹)</label><input name="vehicle_other_charges[]" type="number" min="0" step="0.01" value="0"></div><div class="field"><label>CGST %</label><input name="vehicle_cgst[]" type="number" min="0" step="0.01" value="2.5"></div><div class="field"><label>SGST %</label><input name="vehicle_sgst[]" type="number" min="0" step="0.01" value="2.5"></div><div class="field"><label>IGST %</label><input name="vehicle_igst[]" type="number" min="0" step="0.01" value="5"></div><div class="field full"><label>Remarks</label><textarea name="vehicle_remarks[]" placeholder="Condition, accessories, registration or supplier notes"></textarea></div></div><button type="button" class="secondary-btn btn-remove-vehicle-line" style="color:#c53030;">Remove vehicle</button></div>`;
-    $('#modal-fields').innerHTML = `<div class="form-grid"><div class="field"><label>Bill date *</label><input name="billDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></div><div class="field"><label>Bill no *</label><input name="billNo" required placeholder="INV-1234"></div><div class="field"><label>E-way bill no</label><input name="ewayBillNo"></div><div class="field" style="position:relative;"><label>Vendor *</label><input id="purchase-supplier-search" autocomplete="off" placeholder="Search registered vendor..." required><input type="hidden" name="supplier" id="purchase-supplier" required><div id="purchase-vendor-results" hidden style="position:absolute;z-index:20;left:0;right:0;top:68px;max-height:220px;overflow-y:auto;background:#fff;border:1px solid #94a3b8;border-radius:6px;box-shadow:0 8px 20px rgba(15,23,42,.18);"></div><small style="color:#64748b;">Type at least 2 characters and select a registered vendor.</small></div><div class="field"><label>Vendor GSTIN *</label><input name="vendor_gstin" id="purchase-vendor-gstin" maxlength="15" placeholder="15-character GSTIN"></div><div class="field"><label>Payment terms</label><select name="payment_status" id="purchase-payment-status"><option value="Unpaid">Credit purchase</option><option value="Paid">Fully paid</option></select></div><div class="field"><label>Paid now (₹)</label><input name="payment_amount" id="purchase-payment-amount" type="number" min="0" step="0.01" value="0" inputmode="decimal"><small style="color:#64748b;">Enter any actual amount, e.g. ₹4,500</small></div><div class="field"><label>Paid now (%) — calculated</label><input name="payment_percent" id="purchase-payment-percent" type="text" value="0.00%" readonly style="font-weight:800;background:#f7fafc;"></div><div class="field"><label>Payment mode</label><select name="payment_mode" id="purchase-payment-mode"><option>HDFC Bank Current A/C (50200012345678)</option><option>ICICI Bank Business A/C (001105001234)</option><option>SBI Corporate A/C (30981234567)</option><option>UPI / PhonePe / GPay</option><option>Cash in Hand</option><option>Cheque / DD</option></select></div><div class="field"><label>Location</label><input name="location" value="Main workshop" required></div><div class="field"><label>GST treatment (automatic)</label><input id="purchase-tax-status" value="Enter vendor GSTIN" readonly style="font-weight:700;background:#f7fafc;"><input type="hidden" name="tax_mode" id="purchase-tax-mode" value="INTRA"></div><div class="field"><label>Purchase type</label><select name="purchase_type" id="purchase-type"><option value="components">Component purchase</option><option value="materials">Material purchase</option><option value="vehicle">Vehicle purchase</option><option value="others">Other master catalogue item</option></select></div></div><div id="vehicle-purchase-fields" hidden style="margin-top:14px;padding:12px;background:#fffaf0;border:1px solid #f6ad55;border-radius:8px;"><div style="display:flex;justify-content:space-between;align-items:center;"><strong>Vehicle purchase details</strong><button type="button" class="secondary-btn" id="btn-add-vehicle-line">＋ Add another vehicle</button></div><div id="vehicle-purchase-lines">${vehicleEntry}</div></div><div id="purchase-item-section" style="margin-top:14px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;overflow-x:auto;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><strong>Bill items from Master Catalogue</strong><button type="button" class="secondary-btn" id="btn-add-purchase-line">＋ Add item</button></div><div style="display:grid;grid-template-columns:${purchaseGridColumns};min-width:900px;gap:6px;font-size:10px;color:#64748b;margin-bottom:4px;"><span>Catalogue item</span><span>Qty</span><span>Unit price</span><span>HSN</span><span>CGST %</span><span>SGST %</span><span>IGST %</span><span>Other %</span><span></span></div><div id="purchase-lines">${makeRow()}</div><div id="purchase-total" style="text-align:right;font-weight:800;margin-top:10px;"></div></div>`;
+    $('#modal-fields').innerHTML = `<div class="form-grid"><div class="field"><label>Bill date *</label><input name="billDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></div><div class="field"><label>Bill no *</label><input name="billNo" required placeholder="INV-1234"></div><div class="field"><label>E-way bill no</label><input name="ewayBillNo"></div><div class="field" style="position:relative;"><label>Vendor *</label><input id="purchase-supplier-search" autocomplete="off" placeholder="Search registered vendor..." required><input type="hidden" name="supplier" id="purchase-supplier" required><div id="purchase-vendor-results" hidden style="position:absolute;z-index:20;left:0;right:0;top:68px;max-height:220px;overflow-y:auto;background:#fff;border:1px solid #94a3b8;border-radius:6px;box-shadow:0 8px 20px rgba(15,23,42,.18);"></div><small style="color:#64748b;">Type at least 2 characters and select a registered vendor.</small></div><div class="field"><label>Vendor GSTIN *</label><input name="vendor_gstin" id="purchase-vendor-gstin" maxlength="15" placeholder="15-character GSTIN"></div><div class="field"><label>Payment terms</label><select name="payment_status" id="purchase-payment-status"><option value="Unpaid">Credit purchase</option><option value="Paid">Fully paid</option></select></div><div class="field"><label>Paid now (₹)</label><input name="payment_amount" id="purchase-payment-amount" type="number" min="0" step="0.01" value="0" inputmode="decimal"><small style="color:#64748b;">Enter any actual amount, e.g. ₹4,500</small></div><div class="field"><label>Paid now (%) — calculated</label><input name="payment_percent" id="purchase-payment-percent" type="text" value="0.00%" readonly style="font-weight:800;background:#f7fafc;"></div><div class="field"><label>Payment mode</label><select name="payment_mode" id="purchase-payment-mode">${getBankOptionsHtml(getPrimaryBankAccount())}</select></div><div class="field"><label>Location</label><input name="location" value="Main workshop" required></div><div class="field"><label>GST treatment (automatic)</label><input id="purchase-tax-status" value="Enter vendor GSTIN" readonly style="font-weight:700;background:#f7fafc;"><input type="hidden" name="tax_mode" id="purchase-tax-mode" value="INTRA"></div><div class="field"><label>Purchase type</label><select name="purchase_type" id="purchase-type"><option value="components">Component purchase</option><option value="materials">Material purchase</option><option value="vehicle">Vehicle purchase</option><option value="others">Other master catalogue item</option></select></div></div><div id="vehicle-purchase-fields" hidden style="margin-top:14px;padding:12px;background:#fffaf0;border:1px solid #f6ad55;border-radius:8px;"><div style="display:flex;justify-content:space-between;align-items:center;"><strong>Vehicle purchase details</strong><button type="button" class="secondary-btn" id="btn-add-vehicle-line">＋ Add another vehicle</button></div><div id="vehicle-purchase-lines">${vehicleEntry}</div></div><div id="purchase-item-section" style="margin-top:14px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;overflow-x:auto;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><strong>Bill items from Master Catalogue</strong><button type="button" class="secondary-btn" id="btn-add-purchase-line">＋ Add item</button></div><div style="display:grid;grid-template-columns:${purchaseGridColumns};min-width:900px;gap:6px;font-size:10px;color:#64748b;margin-bottom:4px;"><span>Catalogue item</span><span>Qty</span><span>Unit price</span><span>HSN</span><span>CGST %</span><span>SGST %</span><span>IGST %</span><span>Other %</span><span></span></div><div id="purchase-lines">${makeRow()}</div><div id="purchase-total" style="text-align:right;font-weight:800;margin-top:10px;"></div></div>`;
     const lines = $('#purchase-lines');
     const syncPurchaseTaxInputs = mode => { const interstate = mode === 'INTER'; $$('.purchase-line', lines).forEach(l => { ['purchase_cgst[]', 'purchase_sgst[]'].forEach(name => { const input = l.querySelector(`[name="${name}"]`); if (input) { input.disabled = interstate; input.title = interstate ? 'Disabled for interstate purchase; IGST applies.' : ''; if (interstate) input.value = '0'; } }); const igst = l.querySelector('[name="purchase_igst[]"]'); if (igst) { igst.disabled = !interstate; igst.title = interstate ? '' : 'Disabled for intrastate purchase; CGST + SGST apply.'; if (!interstate) igst.value = '0'; } }); $$('.vehicle-purchase-entry').forEach(v => { ['vehicle_cgst[]', 'vehicle_sgst[]'].forEach(name => { const input = v.querySelector(`[name="${name}"]`); if (input) { input.disabled = interstate; if (interstate) input.value = '0'; } }); const igst = v.querySelector('[name="vehicle_igst[]"]'); if (igst) { igst.disabled = !interstate; if (!interstate) igst.value = '0'; } }); };
     const recalc = () => { let taxable=0,tax=0,extra=0; const mode=$('#purchase-tax-mode').value; syncPurchaseTaxInputs(mode); if($('#purchase-type').value==='vehicle'){ $$('.vehicle-purchase-entry').forEach(v=>{ const base=Number(v.querySelector('[name="vehicle_price[]"]').value||0); const rate=mode==='INTER'?Number(v.querySelector('[name="vehicle_igst[]"]').value||0):Number(v.querySelector('[name="vehicle_cgst[]"]').value||0)+Number(v.querySelector('[name="vehicle_sgst[]"]').value||0); const other=Number(v.querySelector('[name="vehicle_other_charges[]"]').value||0); taxable+=base; extra+=other; tax+=(base+other)*rate/100; }); } else { $$('.purchase-line', lines).forEach(l=>{ const base=Number(l.querySelector('[name="purchase_qty[]"]').value||0)*Number(l.querySelector('[name="purchase_price[]"]').value||0); const rate=mode==='INTER'?Number(l.querySelector('[name="purchase_igst[]"]').value||0):Number(l.querySelector('[name="purchase_cgst[]"]').value||0)+Number(l.querySelector('[name="purchase_sgst[]"]').value||0); taxable+=base; tax+=base*(rate+Number(l.querySelector('[name="purchase_other[]"]').value||0))/100; }); } const total=taxable+tax+extra; let paid=Number($('#purchase-payment-amount')?.value||0); if($('#purchase-payment-status')?.value==='Paid') paid=total; paid=Math.max(0,Math.min(total,paid)); const pct=total?paid/total*100:0; if($('#purchase-payment-percent')) $('#purchase-payment-percent').value=`${pct.toFixed(2)}%`; if($('#purchase-payment-status')?.value==='Paid' && $('#purchase-payment-amount')) $('#purchase-payment-amount').value=total.toFixed(2); $('#purchase-total').textContent=`Taxable ${formatINR(taxable)} + Tax ${formatINR(tax)} + Other charges ${formatINR(extra)} = Total ${formatINR(total)} · Pay now ${formatINR(paid)} (${pct.toFixed(2)}%) · Balance ${formatINR(total-paid)}`; };
@@ -4576,7 +4598,7 @@ async function submitModal(e) {
     const vehiclePurchases=data.purchase_type==='vehicle' ? formData.getAll('vehicle_model_no[]').map((modelNo,i)=>{ const price=Number(formData.getAll('vehicle_price[]')[i]||0), other=Number(formData.getAll('vehicle_other_charges[]')[i]||0), cgstRate=taxMode==='INTER'?0:Number(formData.getAll('vehicle_cgst[]')[i]||0), sgstRate=taxMode==='INTER'?0:Number(formData.getAll('vehicle_sgst[]')[i]||0), igstRate=taxMode==='INTER'?Number(formData.getAll('vehicle_igst[]')[i]||0):0, base=price+other; return {modelNo,chassisNo:formData.getAll('vehicle_chassis_no[]')[i]||'',motorNo:formData.getAll('vehicle_motor_no[]')[i]||'',controllerNo:formData.getAll('vehicle_controller_no[]')[i]||'',batterySerial:formData.getAll('vehicle_battery_no[]')[i]||'',color:formData.getAll('vehicle_color[]')[i]||'',price,otherCharges:other,remarks:formData.getAll('vehicle_remarks[]')[i]||'',taxableValue:base,cgstRate,sgstRate,igstRate,cgstAmount:base*cgstRate/100,sgstAmount:base*sgstRate/100,igstAmount:base*igstRate/100,otherAmount:0}; }).filter(v=>v.chassisNo&&v.modelNo&&v.motorNo&&v.price>0) : [];
     if(data.purchase_type==='vehicle'){ items=vehiclePurchases.map(v=>({...v,name:`Vehicle ${v.modelNo}`,category:'Complete vehicle',qty:1,unitPrice:v.price,hsn:'87116010'})); }
     if(!items.length||!data.supplier||!data.billNo){toast('Add a vendor, bill number, and at least one priced item or vehicle.');return;}
-    const taxableValue=items.reduce((s,x)=>s+x.taxableValue,0),cgstAmount=items.reduce((s,x)=>s+x.cgstAmount,0),sgstAmount=items.reduce((s,x)=>s+x.sgstAmount,0),igstAmount=items.reduce((s,x)=>s+x.igstAmount,0),otherAmount=items.reduce((s,x)=>s+x.otherAmount,0),vehicleOtherCharges=data.purchase_type==='vehicle'?vehiclePurchases.reduce((s,v)=>s+v.otherCharges,0):0,grandTotal=taxableValue+cgstAmount+sgstAmount+igstAmount+otherAmount,date=data.billDate||new Date().toISOString().slice(0,10),paidAmount=Math.max(0,Math.min(grandTotal,Number(data.payment_status==='Paid'?grandTotal:data.payment_amount||0))),paymentPercent=grandTotal?paidAmount/grandTotal*100:0,balanceAmount=grandTotal-paidAmount,paymentMode=data.payment_mode||'HDFC Bank Current A/C (50200012345678)',billId=_editingPurchaseBillId || 'PB-'+Date.now(),editingBill=_editingPurchaseBillId?(state.purchaseBills||[]).find(item=>String(item.id)===String(_editingPurchaseBillId)):null;
+    const taxableValue=items.reduce((s,x)=>s+x.taxableValue,0),cgstAmount=items.reduce((s,x)=>s+x.cgstAmount,0),sgstAmount=items.reduce((s,x)=>s+x.sgstAmount,0),igstAmount=items.reduce((s,x)=>s+x.igstAmount,0),otherAmount=items.reduce((s,x)=>s+x.otherAmount,0),vehicleOtherCharges=data.purchase_type==='vehicle'?vehiclePurchases.reduce((s,v)=>s+v.otherCharges,0):0,grandTotal=taxableValue+cgstAmount+sgstAmount+igstAmount+otherAmount,date=data.billDate||new Date().toISOString().slice(0,10),paidAmount=Math.max(0,Math.min(grandTotal,Number(data.payment_status==='Paid'?grandTotal:data.payment_amount||0))),paymentPercent=grandTotal?paidAmount/grandTotal*100:0,balanceAmount=grandTotal-paidAmount,paymentMode=data.payment_mode||getPrimaryBankAccount(),billId=_editingPurchaseBillId || 'PB-'+Date.now(),editingBill=_editingPurchaseBillId?(state.purchaseBills||[]).find(item=>String(item.id)===String(_editingPurchaseBillId)):null;
     if(data.purchase_type==='vehicle' && !vehiclePurchases.length){toast('Vehicle purchase requires a model number, chassis number, motor number, and a price for at least one vehicle.');return;}
     const billRecord={id:billId,billNo:data.billNo,billDate:date,ewayBillNo:data.ewayBillNo||'',supplier:data.supplier,vendorGstin,taxMode,taxableValue,cgstAmount,sgstAmount,igstAmount,otherAmount,vehicleOtherCharges,grandTotal,paymentStatus:data.payment_status||'Unpaid',paymentPercent,paidAmount,balanceAmount,paymentMode,items};
     const inventoryRows=data.purchase_type!=='vehicle' ? items.map((x,i)=>({batch:`${data.billNo}-${i+1}`,material:x.name,category:x.category,supplier:data.supplier,received:date,available:`${x.qty} / ${x.qty}`,location:data.location||'Main workshop',health:'Good',unitPrice:x.unitPrice,hsn:x.hsn,gstRate:x.sgstRate+x.igstRate+x.otherRate,billNo:data.billNo,ewayBillNo:data.ewayBillNo||''})) : [];
@@ -4688,7 +4710,7 @@ async function submitModal(e) {
     const unitPrice = Number(data.unit_cost || 0);
     const totalPurchaseAmt = qty * unitPrice;
     const suppName = data.supplier || 'General Vendor';
-    const bankAccount = data.bankAccount || 'HDFC Bank Current A/C (50200012345678)';
+    const bankAccount = data.bankAccount || getPrimaryBankAccount();
     const isPaid = data.payment_status === 'Paid';
 
     state.inventory.unshift({
@@ -4819,7 +4841,7 @@ async function submitModal(e) {
   if (kind === 'supplier-pay') {
     const suppName = data.supplier;
     const amount = Number(data.amount || 0);
-    const bankAcc = data.bankAccount || 'HDFC Bank Current A/C (50200012345678)';
+    const bankAcc = data.bankAccount || getPrimaryBankAccount();
     const dateStr = data.date || new Date().toISOString().split('T')[0];
 
     if (!(state.suppliers || []).some(s => normalizeText(s.name) === normalizeText(suppName))) {
@@ -4921,7 +4943,7 @@ async function submitModal(e) {
     }
     const totalAmt = Number(data.grandTotal || 145000);
     const paidAmt = Number(data.paidAmount || totalAmt);
-    const bankAcc = data.bankAccount || 'HDFC Bank Current A/C (50200012345678)';
+    const bankAcc = data.bankAccount || getPrimaryBankAccount();
     const chassisNo = data.chassisNo;
 
     const vehInvoice = {
@@ -5390,7 +5412,7 @@ async function submitModal(e) {
       return;
     }
 
-    const bankAccount = data.credit_mode || 'HDFC Bank Current A/C (50200012345678)';
+    const bankAccount = data.credit_mode || getPrimaryBankAccount();
     const todayStr = data.credit_date || new Date().toISOString().split('T')[0];
     const hostedIsDealer = (state.dealers || []).some(d => normalizeText(d.name) === normalizeText(party));
 
@@ -6680,14 +6702,7 @@ function openSupplierPaymentModal(suppName = '') {
       <div class="field full"><label style="font-weight:700;">Select Supplier *</label><select name="supplier">${suppOptions}</select></div>
       <div class="field"><label style="font-weight:700;">Payment Amount (₹) *</label><input name="amount" type="number" min="0.01" step="0.01" value="50000" required /></div>
       <div class="field"><label style="font-weight:700;">Paying Bank Account / Mode *</label>
-        <select name="bankAccount" style="font-weight:700;">
-          <option value="HDFC Bank Current A/C (50200012345678)">HDFC Bank — Current A/C (50200012345678)</option>
-          <option value="ICICI Bank Business A/C (001105001234)">ICICI Bank — Business A/C (001105001234)</option>
-          <option value="SBI Corporate A/C (30981234567)">SBI — Corporate A/C (30981234567)</option>
-          <option value="UPI / PhonePe / GPay">UPI / PhonePe / GPay</option>
-          <option value="Cash in Hand">Cash in Hand</option>
-          <option value="Cheque / DD">Cheque / Demand Draft</option>
-        </select>
+          <select name="bankAccount" style="font-weight:700;">${getBankOptionsHtml(getPrimaryBankAccount())}</select>
       </div>
       <div class="field"><label style="font-weight:700;">Payment Date *</label><input name="date" type="date" value="${new Date().toISOString().split('T')[0]}" required /></div>
       <div class="field"><label style="font-weight:700;">Reference / UTR / Cheque No</label><input name="ref" value="UTR-${Date.now().toString().slice(-6)}" /></div>
@@ -6793,14 +6808,7 @@ function openVehicleSaleModal(chassisIdx = null) {
       <div class="field full"><label style="font-weight:700;">Full Address / City</label><input name="address" id="veh-sale-address" value="Gaighat, Gorakhpur" /></div>
 
       <div class="field"><label style="font-weight:700;">Receiving Bank Account / Payment Mode *</label>
-        <select name="bankAccount" style="font-weight:700;">
-          <option value="HDFC Bank Current A/C (50200012345678)">HDFC Bank — Current A/C (50200012345678)</option>
-          <option value="ICICI Bank Business A/C (001105001234)">ICICI Bank — Business A/C (001105001234)</option>
-          <option value="SBI Corporate A/C (30981234567)">SBI — Corporate A/C (30981234567)</option>
-          <option value="UPI / PhonePe / GPay">UPI / PhonePe / GPay</option>
-          <option value="Cash in Hand">Cash in Hand</option>
-          <option value="Cheque / DD">Cheque / Demand Draft</option>
-        </select>
+        <select name="bankAccount" style="font-weight:700;">${getBankOptionsHtml(getPrimaryBankAccount())}</select>
       </div>
 
       <div class="field"><label style="font-weight:700;">Vehicle HSN Code</label><input name="hsn" value="87116010" /></div>
@@ -7391,6 +7399,7 @@ function bind() {
       return;
     }
     localStorage.setItem('tejas_system_settings', JSON.stringify(settings));
+    state.settings = settings;
     localStorage.setItem('tejas_sheet_id', $('#set-sheet-id')?.value?.trim() || '');
     localStorage.setItem('tejas_appscript_url', $('#set-webapp-url')?.value?.trim() || '');
     localStorage.setItem('tejas_sync_secret', $('#set-sync-secret')?.value?.trim() || '');
