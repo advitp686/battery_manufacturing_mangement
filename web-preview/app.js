@@ -329,6 +329,7 @@ let _serverOnline = false;
 let _syncDebounceTimer = null;
 let _lastServerState = null;
 let _currentUser = { username: '', role: '', label: '', permissions: [] };
+let _editingPurchaseBillId = null;
 
 const VIEW_PERMISSIONS = {
   dashboard: 'dashboard.read', models: 'models.read', inventory: 'inventory.read', production: 'production.read',
@@ -2440,6 +2441,71 @@ This will remove the bill, its unused stock/vehicles, and its unpaid supplier-le
   toast(`Deleted purchase bill ${bill.billNo} from local cache.`);
 }
 
+function editPurchaseBill(billId) {
+  if (!currentUserHasPermission('purchase.write')) {
+    toast('Access Denied: Purchase bill editing requires purchase access.');
+    return;
+  }
+  const bill = (state.purchaseBills || []).find(item => String(item.id) === String(billId));
+  if (!bill) return;
+  const dependencies = getPurchaseBillDeleteDependencies(bill);
+  if (dependencies.reasons.length) {
+    toast(`Cannot edit ${bill.billNo}: ${dependencies.reasons.join('; ')}.`);
+    return;
+  }
+  if (!_serverOnline) {
+    toast('Purchase bill editing requires the hosted database connection.');
+    return;
+  }
+
+  _editingPurchaseBillId = String(bill.id);
+  openModal('purchase-bill');
+  const setValue = (selector, value) => { const el = $(selector); if (el) el.value = value ?? ''; };
+  setValue('[name="billDate"]', bill.billDate);
+  setValue('[name="billNo"]', bill.billNo);
+  setValue('[name="ewayBillNo"]', bill.ewayBillNo);
+  setValue('#purchase-supplier', bill.supplier);
+  setValue('#purchase-supplier-search', bill.supplier);
+  setValue('#purchase-vendor-gstin', bill.vendorGstin);
+  setValue('#purchase-payment-status', bill.paymentStatus || 'Unpaid');
+  setValue('#purchase-payment-amount', bill.paidAmount || 0);
+  setValue('#purchase-payment-mode', bill.paymentMode || '');
+  setValue('#purchase-tax-mode', bill.taxMode || 'INTRA');
+  setValue('#purchase-type', (bill.items || []).some(item => item.modelNo || item.chassisNo) ? 'vehicle' : 'components');
+  $('#purchase-type')?.dispatchEvent(new Event('change'));
+  $('#modal-title').textContent = `Edit Purchase Bill — ${bill.billNo}`;
+  const fillInput = (row, name, value) => { const el = row.querySelector(`[name="${name}"]`); if (el) el.value = value ?? ''; };
+  const rows = $$('.purchase-line');
+  (bill.items || []).forEach((item, index) => {
+    if (index > 0) $('#btn-add-purchase-line')?.click();
+    const row = $$('.purchase-line')[index];
+    if (!row) return;
+    const select = row.querySelector('.purchase-item');
+    if (select) {
+      if (![...select.options].some(option => option.value === String(item.componentId || ''))) {
+        select.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(item.componentId || item.name || '')}">${escapeHtml(item.name || item.componentId || 'Existing item')}</option>`);
+      }
+      select.value = item.componentId || item.name || '';
+    }
+    fillInput(row, 'purchase_qty[]', item.qty);
+    fillInput(row, 'purchase_price[]', item.unitPrice);
+    fillInput(row, 'purchase_hsn[]', item.hsn);
+    fillInput(row, 'purchase_cgst[]', item.cgstRate);
+    fillInput(row, 'purchase_sgst[]', item.sgstRate);
+    fillInput(row, 'purchase_igst[]', item.igstRate);
+    fillInput(row, 'purchase_other[]', item.otherRate);
+  });
+  if ((bill.items || []).some(item => item.modelNo || item.chassisNo)) {
+    (bill.items || []).forEach((item, index) => {
+      if (index > 0) $('#btn-add-vehicle-line')?.click();
+      const row = $$('.vehicle-purchase-entry')[index];
+      if (!row) return;
+      [['vehicle_model_no[]', item.modelNo], ['vehicle_chassis_no[]', item.chassisNo], ['vehicle_motor_no[]', item.motorNo], ['vehicle_controller_no[]', item.controllerNo], ['vehicle_battery_no[]', item.batterySerial], ['vehicle_color[]', item.color], ['vehicle_price[]', item.price || item.unitPrice], ['vehicle_other_charges[]', item.otherCharges], ['vehicle_cgst[]', item.cgstRate], ['vehicle_sgst[]', item.sgstRate], ['vehicle_igst[]', item.igstRate], ['vehicle_remarks[]', item.remarks]].forEach(([name, value]) => fillInput(row, name, value));
+    });
+  }
+  $('#purchase-vendor-gstin')?.dispatchEvent(new Event('input'));
+}
+
 function issueReplacementModal(claimIdx) {
   const claim = state.claims[claimIdx];
   if (!claim) return;
@@ -2978,6 +3044,9 @@ function updateUserRoleUI() {
 
   $$('.btn-delete-model, .btn-delete-production, .btn-delete-purchase-bill, .btn-delete-component').forEach(button => {
     button.style.display = isAdmin ? '' : 'none';
+  });
+  $$('.btn-edit-purchase-bill').forEach(button => {
+    button.style.display = currentUserHasPermission('purchase.write') ? '' : 'none';
   });
 
   $$('[data-modal]').forEach(button => {
@@ -4217,6 +4286,7 @@ function openModal(kind) {
 function closeModal() {
   const backdrop = $('#modal-backdrop');
   if (!backdrop) return;
+  _editingPurchaseBillId = null;
   backdrop.setAttribute('hidden', 'true');
   backdrop.style.display = 'none';
   const modalEl = $('.modal');
@@ -4506,21 +4576,21 @@ async function submitModal(e) {
     const vehiclePurchases=data.purchase_type==='vehicle' ? formData.getAll('vehicle_model_no[]').map((modelNo,i)=>{ const price=Number(formData.getAll('vehicle_price[]')[i]||0), other=Number(formData.getAll('vehicle_other_charges[]')[i]||0), cgstRate=taxMode==='INTER'?0:Number(formData.getAll('vehicle_cgst[]')[i]||0), sgstRate=taxMode==='INTER'?0:Number(formData.getAll('vehicle_sgst[]')[i]||0), igstRate=taxMode==='INTER'?Number(formData.getAll('vehicle_igst[]')[i]||0):0, base=price+other; return {modelNo,chassisNo:formData.getAll('vehicle_chassis_no[]')[i]||'',motorNo:formData.getAll('vehicle_motor_no[]')[i]||'',controllerNo:formData.getAll('vehicle_controller_no[]')[i]||'',batterySerial:formData.getAll('vehicle_battery_no[]')[i]||'',color:formData.getAll('vehicle_color[]')[i]||'',price,otherCharges:other,remarks:formData.getAll('vehicle_remarks[]')[i]||'',taxableValue:base,cgstRate,sgstRate,igstRate,cgstAmount:base*cgstRate/100,sgstAmount:base*sgstRate/100,igstAmount:base*igstRate/100,otherAmount:0}; }).filter(v=>v.chassisNo&&v.modelNo&&v.motorNo&&v.price>0) : [];
     if(data.purchase_type==='vehicle'){ items=vehiclePurchases.map(v=>({...v,name:`Vehicle ${v.modelNo}`,category:'Complete vehicle',qty:1,unitPrice:v.price,hsn:'87116010'})); }
     if(!items.length||!data.supplier||!data.billNo){toast('Add a vendor, bill number, and at least one priced item or vehicle.');return;}
-    const taxableValue=items.reduce((s,x)=>s+x.taxableValue,0),cgstAmount=items.reduce((s,x)=>s+x.cgstAmount,0),sgstAmount=items.reduce((s,x)=>s+x.sgstAmount,0),igstAmount=items.reduce((s,x)=>s+x.igstAmount,0),otherAmount=items.reduce((s,x)=>s+x.otherAmount,0),vehicleOtherCharges=data.purchase_type==='vehicle'?vehiclePurchases.reduce((s,v)=>s+v.otherCharges,0):0,grandTotal=taxableValue+cgstAmount+sgstAmount+igstAmount+otherAmount,date=data.billDate||new Date().toISOString().slice(0,10),paidAmount=Math.max(0,Math.min(grandTotal,Number(data.payment_status==='Paid'?grandTotal:data.payment_amount||0))),paymentPercent=grandTotal?paidAmount/grandTotal*100:0,balanceAmount=grandTotal-paidAmount,paymentMode=data.payment_mode||'HDFC Bank Current A/C (50200012345678)',billId='PB-'+Date.now();
+    const taxableValue=items.reduce((s,x)=>s+x.taxableValue,0),cgstAmount=items.reduce((s,x)=>s+x.cgstAmount,0),sgstAmount=items.reduce((s,x)=>s+x.sgstAmount,0),igstAmount=items.reduce((s,x)=>s+x.igstAmount,0),otherAmount=items.reduce((s,x)=>s+x.otherAmount,0),vehicleOtherCharges=data.purchase_type==='vehicle'?vehiclePurchases.reduce((s,v)=>s+v.otherCharges,0):0,grandTotal=taxableValue+cgstAmount+sgstAmount+igstAmount+otherAmount,date=data.billDate||new Date().toISOString().slice(0,10),paidAmount=Math.max(0,Math.min(grandTotal,Number(data.payment_status==='Paid'?grandTotal:data.payment_amount||0))),paymentPercent=grandTotal?paidAmount/grandTotal*100:0,balanceAmount=grandTotal-paidAmount,paymentMode=data.payment_mode||'HDFC Bank Current A/C (50200012345678)',billId=_editingPurchaseBillId || 'PB-'+Date.now(),editingBill=_editingPurchaseBillId?(state.purchaseBills||[]).find(item=>String(item.id)===String(_editingPurchaseBillId)):null;
     if(data.purchase_type==='vehicle' && !vehiclePurchases.length){toast('Vehicle purchase requires a model number, chassis number, motor number, and a price for at least one vehicle.');return;}
     const billRecord={id:billId,billNo:data.billNo,billDate:date,ewayBillNo:data.ewayBillNo||'',supplier:data.supplier,vendorGstin,taxMode,taxableValue,cgstAmount,sgstAmount,igstAmount,otherAmount,vehicleOtherCharges,grandTotal,paymentStatus:data.payment_status||'Unpaid',paymentPercent,paidAmount,balanceAmount,paymentMode,items};
     const inventoryRows=data.purchase_type!=='vehicle' ? items.map((x,i)=>({batch:`${data.billNo}-${i+1}`,material:x.name,category:x.category,supplier:data.supplier,received:date,available:`${x.qty} / ${x.qty}`,location:data.location||'Main workshop',health:'Good',unitPrice:x.unitPrice,hsn:x.hsn,gstRate:x.sgstRate+x.igstRate+x.otherRate,billNo:data.billNo,ewayBillNo:data.ewayBillNo||''})) : [];
-    if(!state.supplierLedger)state.supplierLedger=[]; const prev=state.supplierLedger.filter(l=>normalizeText(l.supplier)===normalizeText(data.supplier)).reduce((s,l)=>s+ledgerMoney(l.credit)-ledgerMoney(l.debit),0); const ledgerRows=[{id:'SLEDG-BILL-'+Date.now(),date,supplier:data.supplier,ref:data.billNo,desc:`Purchase Bill ${data.billNo} (${items.length} items)${data.ewayBillNo?' · E-way '+data.ewayBillNo:''}`,debit:0,credit:grandTotal,balance:prev+grandTotal,bankAccount:paymentMode}];
+    if(!state.supplierLedger)state.supplierLedger=[]; const oldBillNo=editingBill?.billNo; const prev=state.supplierLedger.filter(l=>normalizeText(l.supplier)===normalizeText(data.supplier) && (!oldBillNo || ![oldBillNo,`PAY-${oldBillNo}`].includes(String(l.ref||'').trim()))).reduce((s,l)=>s+ledgerMoney(l.credit)-ledgerMoney(l.debit),0); const ledgerRows=[{id:'SLEDG-BILL-'+Date.now(),date,supplier:data.supplier,ref:data.billNo,desc:`Purchase Bill ${data.billNo} (${items.length} items)${data.ewayBillNo?' · E-way '+data.ewayBillNo:''}`,debit:0,credit:grandTotal,balance:prev+grandTotal,bankAccount:paymentMode}];
     if(paidAmount>0)ledgerRows.push({id:'SLEDG-PAY-'+Date.now(),date,supplier:data.supplier,ref:'PAY-'+data.billNo,desc:`${paymentPercent}% advance/payment for Purchase Bill ${data.billNo}`,debit:paidAmount,credit:0,balance:prev+balanceAmount,bankAccount:paymentMode});
     const vehicleRows=data.purchase_type==='vehicle' ? vehiclePurchases.map(v=>({chassisNo:v.chassisNo,model:v.modelNo,modelNo:v.modelNo,motorNo:v.motorNo,controllerNo:v.controllerNo,batterySerial:v.batterySerial,color:v.color,otherCharges:v.otherCharges,remarks:v.remarks,price:v.price+v.otherCharges,purchaseBillNo:data.billNo,status:'Available in Showroom'})) : [];
     if (_serverOnline) {
-      const response = await fetch('/api/purchase-bills', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify({bill:billRecord,items,inventory:inventoryRows,supplierLedger:ledgerRows,vehicles:vehicleRows}) });
+      const response = await fetch(_editingPurchaseBillId ? `/api/purchase-bills/${encodeURIComponent(_editingPurchaseBillId)}` : '/api/purchase-bills', { method:_editingPurchaseBillId?'PUT':'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify({bill:billRecord,items,inventory:inventoryRows,supplierLedger:ledgerRows,vehicles:vehicleRows}) });
       if (!response.ok) {
         const error=await response.json().catch(()=>({}));
-        toast(`Purchase ${data.billNo} was rejected: ${error.error || `HTTP ${response.status}`}`);
+        toast(`Purchase ${data.billNo} was ${_editingPurchaseBillId?'not edited':'rejected'}: ${error.error || `HTTP ${response.status}`}`);
         return;
       }
-      await refreshHostedState(); closeModal(); showView('purchase-ledger'); toast(`${data.purchase_type==='vehicle'?'Vehicle purchase saved to Vehicle Stock and Purchase Ledger':'Purchase bill'} ${data.billNo} saved for ${formatINR(grandTotal)}`); return;
+      const wasEditing = Boolean(_editingPurchaseBillId); _editingPurchaseBillId = null; await refreshHostedState(); closeModal(); showView('purchase-ledger'); toast(`${wasEditing?'Purchase bill updated':'Purchase bill'} ${data.billNo} saved for ${formatINR(grandTotal)}`); return;
     }
     if(!state.purchaseBills)state.purchaseBills=[]; state.purchaseBills.unshift(billRecord);
     inventoryRows.forEach(row=>state.inventory.unshift(row));
@@ -6408,7 +6478,7 @@ function renderPurchaseBillHistory() {
       <td style="text-align:right;font-weight:800;">${formatINR(grandTotal)}</td>
       <td style="text-align:right;color:#2f855a;font-weight:700;">${formatINR(paid)}<br><small>${Number(bill.paymentPercent || (grandTotal ? paid / grandTotal * 100 : 0)).toFixed(2)}%</small></td>
       <td style="text-align:right;color:${balance > 0 ? '#c53030' : '#2f855a'};font-weight:800;">${formatINR(balance)}</td>
-      <td style="white-space:nowrap;"><button type="button" class="secondary-btn btn-print-purchase-bill" data-bill="${escapeHtml(bill.billNo)}" style="padding:5px 9px;font-size:11px;">🖨️ View / Print</button> <button type="button" class="secondary-btn btn-delete-purchase-bill" data-bill-id="${escapeHtml(bill.id)}" title="Deletes only when linked stock is unused and no supplier payment exists" style="padding:5px 9px;font-size:11px;color:#b91c1c;border-color:#fecaca;background:#fff5f5;">Delete</button></td>
+      <td style="white-space:nowrap;"><button type="button" class="secondary-btn btn-print-purchase-bill" data-bill="${escapeHtml(bill.billNo)}" style="padding:5px 9px;font-size:11px;">🖨️ View / Print</button> <button type="button" class="secondary-btn btn-edit-purchase-bill" data-bill-id="${escapeHtml(bill.id)}" title="Edit only while linked stock and vehicles are unused" style="padding:5px 9px;font-size:11px;color:#2b6cb0;">Edit</button> <button type="button" class="secondary-btn btn-delete-purchase-bill" data-bill-id="${escapeHtml(bill.id)}" title="Deletes only when linked stock is unused and no supplier payment exists" style="padding:5px 9px;font-size:11px;color:#b91c1c;border-color:#fecaca;background:#fff5f5;">Delete</button></td>
     </tr>`;
   }).join('') || '<tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:24px;">No purchase bills recorded yet. Use “Enter Purchase Bill” to create the first history record.</td></tr>';
 }
@@ -6919,6 +6989,13 @@ function bind() {
     if (deletePurchaseBtn) {
       e.preventDefault();
       deletePurchaseBill(deletePurchaseBtn.dataset.billId);
+      return;
+    }
+
+    const editPurchaseBtn = e.target.closest('.btn-edit-purchase-bill');
+    if (editPurchaseBtn) {
+      e.preventDefault();
+      editPurchaseBill(editPurchaseBtn.dataset.billId);
       return;
     }
 

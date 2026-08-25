@@ -221,6 +221,70 @@ router.post('/api/purchase-bills', asyncRoute(async (req, res) => {
     res.status(201).json({ success: true, bill, version: result.version });
 }));
 
+router.put('/api/purchase-bills/:id', asyncRoute(async (req, res) => {
+    const payload = req.body || {};
+    const bill = { ...(payload.bill || {}) };
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    const inventoryRows = Array.isArray(payload.inventory) ? payload.inventory : [];
+    const ledgerRows = Array.isArray(payload.supplierLedger) ? payload.supplierLedger : [];
+    const vehicleRows = Array.isArray(payload.vehicles) ? payload.vehicles : [];
+    delete bill.items;
+    bill.id = req.params.id;
+    if (!bill.billNo || !bill.supplier) throw badRequest('Bill number and supplier are required');
+    if (!items.length) throw badRequest('At least one purchase item is required');
+
+    const result = await withTransaction(async client => {
+        const existing = (await query('SELECT * FROM purchase_bills WHERE id = $1 FOR UPDATE', [req.params.id], client)).rows[0];
+        if (!existing) throw operationError(`Purchase bill not found: ${req.params.id}`, 404);
+        const duplicate = (await query('SELECT id FROM purchase_bills WHERE bill_no = $1 AND id <> $2 LIMIT 1', [bill.billNo, req.params.id], client)).rows[0];
+        if (duplicate) throw operationError(`Purchase bill ${bill.billNo} already exists. Use a unique bill number.`, 409);
+
+        const linkedInventory = (await query('SELECT * FROM inventory WHERE bill_no = $1 FOR UPDATE', [existing.bill_no], client)).rows;
+        const usedInventory = linkedInventory.filter(row => {
+            const availability = parseInventoryAvailabilityForDelete(row.available);
+            return !availability || availability.available < availability.total;
+        });
+        if (usedInventory.length) throw operationError(`Purchase bill ${existing.bill_no} cannot be edited because linked stock has already been used in production or sales.`, 409);
+
+        const linkedVehicles = (await query('SELECT * FROM vehicles WHERE purchase_bill_no = $1 FOR UPDATE', [existing.bill_no], client)).rows;
+        const chassisNumbers = linkedVehicles.map(row => row.chassis_no).filter(Boolean);
+        const invoicedChassis = chassisNumbers.length
+            ? (await query('SELECT chassis_no FROM vehicle_invoices WHERE chassis_no = ANY($1::text[])', [chassisNumbers], client)).rows.map(row => row.chassis_no)
+            : [];
+        if (linkedVehicles.some(row => row.status !== 'Available in Showroom' || invoicedChassis.includes(row.chassis_no))) {
+            throw operationError(`Purchase bill ${existing.bill_no} cannot be edited because a linked vehicle has already been sold or invoiced.`, 409);
+        }
+
+        const paymentRows = (await query('SELECT * FROM supplier_ledger WHERE supplier = $1 AND ref = $2 FOR UPDATE', [existing.supplier, `PAY-${existing.bill_no}`], client)).rows;
+        if (Number(existing.paid_amount || 0) > 0 || String(existing.payment_status || '').toLowerCase() === 'paid' || paymentRows.length) {
+            throw operationError(`Purchase bill ${existing.bill_no} cannot be edited because a supplier payment is recorded.`, 409);
+        }
+        const newInventoryDuplicate = new Set();
+        for (const row of inventoryRows) {
+            if (!row.batch || newInventoryDuplicate.has(row.batch)) throw badRequest('Every inventory row needs a unique batch number');
+            newInventoryDuplicate.add(row.batch);
+            const conflict = (await query('SELECT batch FROM inventory WHERE batch = $1 AND bill_no <> $2', [row.batch, existing.bill_no], client)).rows[0];
+            if (conflict) throw operationError(`Inventory batch ${row.batch} already exists.`, 409);
+        }
+
+        await query('DELETE FROM inventory WHERE bill_no = $1', [existing.bill_no], client);
+        await query('DELETE FROM vehicles WHERE purchase_bill_no = $1', [existing.bill_no], client);
+        await query('DELETE FROM supplier_ledger WHERE supplier = $1 AND ref IN ($2, $3)', [existing.supplier, existing.bill_no, `PAY-${existing.bill_no}`], client);
+        await query('DELETE FROM purchase_bill_items WHERE bill_id = $1', [existing.id], client);
+        await query('UPDATE purchase_bills SET bill_no = $1, bill_date = $2, eway_bill_no = $3, supplier = $4, vendor_gstin = $5, taxable_value = $6, cgst_amount = $7, sgst_amount = $8, igst_amount = $9, other_amount = $10, vehicle_other_charges = $11, tax_mode = $12, grand_total = $13, payment_status = $14, payment_percent = $15, paid_amount = $16, balance_amount = $17, payment_mode = $18 WHERE id = $19', [bill.billNo, bill.billDate, bill.ewayBillNo || '', bill.supplier, bill.vendorGstin || '', bill.taxableValue || 0, bill.cgstAmount || 0, bill.sgstAmount || 0, bill.igstAmount || 0, bill.otherAmount || 0, bill.vehicleOtherCharges || 0, bill.taxMode || 'INTRA', bill.grandTotal || 0, bill.paymentStatus || 'Unpaid', 0, 0, bill.balanceAmount || bill.grandTotal || 0, bill.paymentMode || '', bill.id], client);
+        for (const item of items) await insert('purchase_bill_items', { ...item, billId: bill.id }, client);
+        for (const row of inventoryRows) await insert('inventory', row, client);
+        for (const row of ledgerRows) await insert('supplier_ledger', row, client);
+        for (const row of vehicleRows) await insert('vehicles', row, client);
+
+        const currentVersion = Number((await query("SELECT value FROM app_meta WHERE key = 'state_version'", [], client)).rows[0]?.value || 0);
+        const nextVersion = currentVersion + 1;
+        await query("INSERT INTO app_meta(key,value) VALUES ('state_version',$1) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value", [String(nextVersion)], client);
+        return { version: nextVersion };
+    });
+    res.json({ success: true, bill, version: result.version });
+}));
+
 const stateTableMap = {
     components: 'components', inventory: 'inventory', production: 'production', dealers: 'dealers',
     sales: 'sales', ledger: 'ledger', warranties: 'warranties', claims: 'claims', suppliers: 'suppliers',
