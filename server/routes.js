@@ -181,6 +181,46 @@ router.delete('/api/purchase-bills/:id', asyncRoute(async (req, res) => {
     res.json({ success: true, ...result });
 }));
 
+// Purchase bills are posted as one transaction so a failed inventory, ledger,
+// or duplicate check cannot leave a half-created purchase behind.
+router.post('/api/purchase-bills', asyncRoute(async (req, res) => {
+    const payload = req.body || {};
+    const bill = { ...(payload.bill || {}) };
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    const inventoryRows = Array.isArray(payload.inventory) ? payload.inventory : [];
+    const ledgerRows = Array.isArray(payload.supplierLedger) ? payload.supplierLedger : [];
+    const vehicleRows = Array.isArray(payload.vehicles) ? payload.vehicles : [];
+    delete bill.items;
+    if (!bill.id || !bill.billNo || !bill.supplier) throw badRequest('Bill id, bill number, and supplier are required');
+    if (!items.length) throw badRequest('At least one purchase item is required');
+    if (inventoryRows.length && inventoryRows.some(row => !row.batch)) throw badRequest('Every inventory row needs a batch number');
+    if (vehicleRows.length && vehicleRows.some(row => !row.chassisNo)) throw badRequest('Every vehicle row needs a chassis number');
+
+    const result = await withTransaction(async client => {
+        const duplicate = (await query('SELECT id FROM purchase_bills WHERE id = $1 OR bill_no = $2 LIMIT 1', [bill.id, bill.billNo], client)).rows[0];
+        if (duplicate) throw operationError(`Purchase bill ${bill.billNo} already exists. Use a unique bill number.`, 409);
+        for (const row of inventoryRows) {
+            const exists = (await query('SELECT batch FROM inventory WHERE batch = $1', [row.batch], client)).rows[0];
+            if (exists) throw operationError(`Inventory batch ${row.batch} already exists. Use a unique bill number.`, 409);
+        }
+        for (const row of vehicleRows) {
+            const exists = (await query('SELECT chassis_no FROM vehicles WHERE chassis_no = $1', [row.chassisNo], client)).rows[0];
+            if (exists) throw operationError(`Vehicle chassis ${row.chassisNo} already exists.`, 409);
+        }
+        await insert('purchase_bills', bill, client);
+        for (const item of items) await insert('purchase_bill_items', { ...item, billId: bill.id }, client);
+        for (const row of inventoryRows) await insert('inventory', row, client);
+        for (const row of ledgerRows) await insert('supplier_ledger', row, client);
+        for (const row of vehicleRows) await insert('vehicles', row, client);
+
+        const currentVersion = Number((await query("SELECT value FROM app_meta WHERE key = 'state_version'", [], client)).rows[0]?.value || 0);
+        const nextVersion = currentVersion + 1;
+        await query("INSERT INTO app_meta(key,value) VALUES ('state_version',$1) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value", [String(nextVersion)], client);
+        return { version: nextVersion };
+    });
+    res.status(201).json({ success: true, bill, version: result.version });
+}));
+
 const stateTableMap = {
     components: 'components', inventory: 'inventory', production: 'production', dealers: 'dealers',
     sales: 'sales', ledger: 'ledger', warranties: 'warranties', claims: 'claims', suppliers: 'suppliers',

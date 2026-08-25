@@ -4508,16 +4508,29 @@ async function submitModal(e) {
     if(!items.length||!data.supplier||!data.billNo){toast('Add a vendor, bill number, and at least one priced item or vehicle.');return;}
     const taxableValue=items.reduce((s,x)=>s+x.taxableValue,0),cgstAmount=items.reduce((s,x)=>s+x.cgstAmount,0),sgstAmount=items.reduce((s,x)=>s+x.sgstAmount,0),igstAmount=items.reduce((s,x)=>s+x.igstAmount,0),otherAmount=items.reduce((s,x)=>s+x.otherAmount,0),vehicleOtherCharges=data.purchase_type==='vehicle'?vehiclePurchases.reduce((s,v)=>s+v.otherCharges,0):0,grandTotal=taxableValue+cgstAmount+sgstAmount+igstAmount+otherAmount,date=data.billDate||new Date().toISOString().slice(0,10),paidAmount=Math.max(0,Math.min(grandTotal,Number(data.payment_status==='Paid'?grandTotal:data.payment_amount||0))),paymentPercent=grandTotal?paidAmount/grandTotal*100:0,balanceAmount=grandTotal-paidAmount,paymentMode=data.payment_mode||'HDFC Bank Current A/C (50200012345678)',billId='PB-'+Date.now();
     if(data.purchase_type==='vehicle' && !vehiclePurchases.length){toast('Vehicle purchase requires a model number, chassis number, motor number, and a price for at least one vehicle.');return;}
-    if(!state.purchaseBills)state.purchaseBills=[]; state.purchaseBills.unshift({id:billId,billNo:data.billNo,billDate:date,ewayBillNo:data.ewayBillNo||'',supplier:data.supplier,vendorGstin,taxMode,taxableValue,cgstAmount,sgstAmount,igstAmount,otherAmount,vehicleOtherCharges,grandTotal,paymentStatus:data.payment_status||'Unpaid',paymentPercent,paidAmount,balanceAmount,paymentMode,items});
-    if(data.purchase_type!=='vehicle') items.forEach((x,i)=>state.inventory.unshift({batch:`${data.billNo}-${i+1}`,material:x.name,category:x.category,supplier:data.supplier,received:date,available:`${x.qty} / ${x.qty}`,location:data.location||'Main workshop',health:'Good',unitPrice:x.unitPrice,hsn:x.hsn,gstRate:x.sgstRate+x.igstRate+x.otherRate,billNo:data.billNo,ewayBillNo:data.ewayBillNo||''}));
-    if(!state.supplierLedger)state.supplierLedger=[]; const prev=state.supplierLedger.filter(l=>normalizeText(l.supplier)===normalizeText(data.supplier)).reduce((s,l)=>s+ledgerMoney(l.credit)-ledgerMoney(l.debit),0); state.supplierLedger.unshift({id:'SLEDG-BILL-'+Date.now(),date,supplier:data.supplier,ref:data.billNo,desc:`Purchase Bill ${data.billNo} (${items.length} items)${data.ewayBillNo?' · E-way '+data.ewayBillNo:''}`,debit:0,credit:grandTotal,balance:prev+grandTotal,bankAccount:paymentMode});
-    if(paidAmount>0)state.supplierLedger.unshift({id:'SLEDG-PAY-'+Date.now(),date,supplier:data.supplier,ref:'PAY-'+data.billNo,desc:`${paymentPercent}% advance/payment for Purchase Bill ${data.billNo}`,debit:paidAmount,credit:0,balance:prev+balanceAmount,bankAccount:paymentMode});
-    if(data.purchase_type==='vehicle'){ if(!state.vehicles)state.vehicles=[]; vehiclePurchases.forEach(v=>state.vehicles.unshift({chassisNo:v.chassisNo,model:v.modelNo,modelNo:v.modelNo,motorNo:v.motorNo,controllerNo:v.controllerNo,batterySerial:v.batterySerial,color:v.color,otherCharges:v.otherCharges,remarks:v.remarks,price:v.price+v.otherCharges,purchaseBillNo:data.billNo,status:'Available in Showroom'})); }
+    const billRecord={id:billId,billNo:data.billNo,billDate:date,ewayBillNo:data.ewayBillNo||'',supplier:data.supplier,vendorGstin,taxMode,taxableValue,cgstAmount,sgstAmount,igstAmount,otherAmount,vehicleOtherCharges,grandTotal,paymentStatus:data.payment_status||'Unpaid',paymentPercent,paidAmount,balanceAmount,paymentMode,items};
+    const inventoryRows=data.purchase_type!=='vehicle' ? items.map((x,i)=>({batch:`${data.billNo}-${i+1}`,material:x.name,category:x.category,supplier:data.supplier,received:date,available:`${x.qty} / ${x.qty}`,location:data.location||'Main workshop',health:'Good',unitPrice:x.unitPrice,hsn:x.hsn,gstRate:x.sgstRate+x.igstRate+x.otherRate,billNo:data.billNo,ewayBillNo:data.ewayBillNo||''})) : [];
+    if(!state.supplierLedger)state.supplierLedger=[]; const prev=state.supplierLedger.filter(l=>normalizeText(l.supplier)===normalizeText(data.supplier)).reduce((s,l)=>s+ledgerMoney(l.credit)-ledgerMoney(l.debit),0); const ledgerRows=[{id:'SLEDG-BILL-'+Date.now(),date,supplier:data.supplier,ref:data.billNo,desc:`Purchase Bill ${data.billNo} (${items.length} items)${data.ewayBillNo?' · E-way '+data.ewayBillNo:''}`,debit:0,credit:grandTotal,balance:prev+grandTotal,bankAccount:paymentMode}];
+    if(paidAmount>0)ledgerRows.push({id:'SLEDG-PAY-'+Date.now(),date,supplier:data.supplier,ref:'PAY-'+data.billNo,desc:`${paymentPercent}% advance/payment for Purchase Bill ${data.billNo}`,debit:paidAmount,credit:0,balance:prev+balanceAmount,bankAccount:paymentMode});
+    const vehicleRows=data.purchase_type==='vehicle' ? vehiclePurchases.map(v=>({chassisNo:v.chassisNo,model:v.modelNo,modelNo:v.modelNo,motorNo:v.motorNo,controllerNo:v.controllerNo,batterySerial:v.batterySerial,color:v.color,otherCharges:v.otherCharges,remarks:v.remarks,price:v.price+v.otherCharges,purchaseBillNo:data.billNo,status:'Available in Showroom'})) : [];
+    if (_serverOnline) {
+      const response = await fetch('/api/purchase-bills', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify({bill:billRecord,items,inventory:inventoryRows,supplierLedger:ledgerRows,vehicles:vehicleRows}) });
+      if (!response.ok) {
+        const error=await response.json().catch(()=>({}));
+        toast(`Purchase ${data.billNo} was rejected: ${error.error || `HTTP ${response.status}`}`);
+        return;
+      }
+      await refreshHostedState(); closeModal(); showView('purchase-ledger'); toast(`${data.purchase_type==='vehicle'?'Vehicle purchase saved to Vehicle Stock and Purchase Ledger':'Purchase bill'} ${data.billNo} saved for ${formatINR(grandTotal)}`); return;
+    }
+    if(!state.purchaseBills)state.purchaseBills=[]; state.purchaseBills.unshift(billRecord);
+    inventoryRows.forEach(row=>state.inventory.unshift(row));
+    ledgerRows.slice().reverse().forEach(row=>state.supplierLedger.unshift(row));
+    if(vehicleRows.length){ if(!state.vehicles)state.vehicles=[]; vehicleRows.forEach(row=>state.vehicles.unshift(row)); }
     const persistence = await saveState({ immediate: true });
     if (!persistence.ok || persistence.localOnly) {
       restoreStateSnapshot(previousState);
       render();
-      toast(`Purchase ${data.billNo} was not posted to the hosted database. No success was recorded.`);
+      toast(`Purchase ${data.billNo} was not posted: ${persistence.error || 'database unavailable'}`);
       return;
     }
     render();closeModal();showView('purchase-ledger');toast(`${data.purchase_type==='vehicle'?'Vehicle purchase saved to Vehicle Stock and Purchase Ledger':'Purchase bill'} ${data.billNo} saved for ${formatINR(grandTotal)}`);return;

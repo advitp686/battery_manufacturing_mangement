@@ -92,7 +92,8 @@ function permissionForRequest(req) {
     if (path === '/operations/payment' || path === '/operations/ledger-entry') return 'finance.write';
     if (path === '/operations/warranty' || path === '/operations/claim') return 'warranty.write';
     if (/^\/operations\/(sale|vehicle-sale)\/[^/]+\/cancel$/.test(path)) return 'admin.delete';
-    if (path.startsWith('/purchase-bills/')) return 'admin.delete';
+    if (path === '/purchase-bills') return mutating ? 'purchase.write' : 'purchase.read';
+    if (path.startsWith('/purchase-bills/')) return req.method === 'DELETE' ? 'admin.delete' : 'purchase.read';
     if (req.method === 'DELETE') return 'admin.delete';
     const resource = Object.keys(resourcePermission).find(name => path === `/${name}` || path.startsWith(`/${name}/`));
     if (!resource) return mutating ? 'admin.settings' : null;
