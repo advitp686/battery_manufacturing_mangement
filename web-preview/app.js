@@ -3787,13 +3787,7 @@ function openModal(kind) {
         </div>
 
         <div class="field"><label style="font-weight:700;">Paying Bank Account</label>
-          <select name="bankAccount" style="font-weight:700;">
-            <option value="HDFC Bank Current A/C (50200012345678)">HDFC Bank — Current A/C (50200012345678)</option>
-            <option value="ICICI Bank Business A/C (001105001234)">ICICI Bank — Business A/C (001105001234)</option>
-            <option value="SBI Corporate A/C (30981234567)">SBI — Corporate A/C (30981234567)</option>
-            <option value="UPI / PhonePe / GPay">UPI / PhonePe / GPay</option>
-            <option value="Cash in Hand">Cash in Hand</option>
-          </select>
+          <select name="bankAccount" style="font-weight:700;">${getBankOptionsHtml(getPrimaryBankAccount())}</select>
         </div>
 
         <div class="field"><label style="font-weight:700;">Storage Location</label><input name="location" value="Main workshop" required /></div>
